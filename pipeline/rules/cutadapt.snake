@@ -1,0 +1,56 @@
+""" rules for basic QC checks """ 
+
+raw = path.join("{data}", "raw_data")
+
+eichhorn_libs = [
+    "SRR3710279", 
+    "SRR3710280",
+    "SRR3710285",
+    "SRR3710286",
+    "SRR3710291",
+    "SRR3710292",
+    "SRR3710293",
+    "SRR3710294",
+    "SRR3710299"
+    ]
+def adapt_seq(wildcards):
+    if wildcards.sample in eichhorn_libs:
+      adapt = 'TCGTATGCCGTCTTCTGCTT'
+    else:
+      adapt = 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC'
+    return adapt
+
+def adapt_trim(wildcards):
+    if wildcards.sample in eichhorn_libs:
+      trim = 8 
+    else:
+      trim = 0 
+    return trim 
+
+rule cutadapt:
+  input:
+    path.join(raw, "{sample}.fastq.gz"),
+  output:
+    path.join("{data}", "fastq", "trimmed", "{sample}_trimmed.fastq.gz") 
+  params:
+    adapt = adapt_seq,
+    trim = adapt_trim,
+    job_name = "trim.{sample}",
+    memory = "select[mem>4] rusage[mem=4]",
+  log:
+    path.join("{data}", "fastq", "trimmed", "logs", "{sample}.txt") 
+  message:
+    " trimmin illumina adapters" 
+  threads:
+    1
+  resources: all_threads=1
+  shell:
+    """
+    cutadapt \
+      -m 18 \
+      -u {params.trim} \
+      -a {params.adapt} \
+      -o {output} \
+      {input} 
+    """
+

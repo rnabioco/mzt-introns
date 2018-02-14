@@ -1,0 +1,35 @@
+# config for RNA-Variant discovery snakemake pipeline #
+ 
+# directory for data
+DATA: 
+  "../data"
+
+# directory for auxillary scripts
+SRC: 
+  "../src" 
+
+# directory for databases
+DBASES: 
+  "../dbases" 
+
+GENOME:
+  "/vol3/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
+
+GENOME_DIR:
+  "/vol3/home/riemondy/Projects/shared_dbases/star/drosophila/BDGP6"
+
+TRANSCRIPTS:
+    "/vol3/home/riemondy/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
+
+TRANSCRIPTS_FA:
+  "/vol3/home/riemondy/Projects/shared_dbases/transcript_fastas/gencode.v26.transcripts.fa.gz"
+
+
+CHROM_SIZES:
+  "/vol3/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
+
+# path to STAR SJ.out.tab file
+# Can be single file or wildcard expression matching multiple files
+SPLICE_JUNCTS:
+  "../data/star/firstpass/*_SJ.out.tab"
+

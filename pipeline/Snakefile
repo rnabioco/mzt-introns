@@ -1,0 +1,76 @@
+shell.executable("/bin/bash")
+shell.prefix("source ~/.bash_profile; ")
+from os import path
+from glob import glob
+import sys
+
+""" Snakemake pipeline for primary expression quanitification """ 
+
+configfile: "config.yaml"
+  
+DATA = config["DATA"]
+SRC = config["SRC"]
+DBASES = config["DBASES"]
+TRANSCRIPTS = config["TRANSCRIPTS"]
+GENOME = config["GENOME"]
+GENOME_DIR = config["GENOME_DIR"]
+CHROM_SIZES = config["CHROM_SIZES"]
+SPLICE_JUNCTS = config["SPLICE_JUNCTS"]
+
+
+# find all splice junction files (no error if none)
+# if no splice junctions have been generated, then run pipeline through
+# star mapping. Then rerun with the produced splice junctions
+
+SPLICE_JUNCTS = config["SPLICE_JUNCTS"]
+if SPLICE_JUNCTS: 
+  # make a string with filenames seperated by whitespace
+  SPLICE_JUNCTS = glob(SPLICE_JUNCTS)
+  SPLICE_JUNCTS = " ".join(SPLICE_JUNCTS)
+
+SAMPLE, = glob_wildcards(path.join(DATA, 
+                    "raw_data","{sample}.fastq.gz"))
+
+rule all:
+  input:
+    #### rsem ####
+    expand(path.join("{data}", "fastq", "trimmed",
+    "{sample}_trimmed.fastq.gz"), 
+            data=DATA, sample = SAMPLE),
+    
+    path.join(DBASES, "primary_transcript_db.gtf"),
+    path.join(DBASES, "rsem", "primary_transcript_db.transcripts.fa"),
+    path.join(DBASES, "rsem", "primary_transcript_db.seq"),
+    path.join(DBASES, "rsem", "primary_transcript_db.grp"),
+    expand("{data}/rsem/{sample}/{sample}.isoforms.results",
+            data=DATA, sample = SAMPLE),
+
+    #### salmon ####
+    expand(path.join("{data}", "salmon", "{sample}", "quant.sf"),
+            data=DATA, sample = SAMPLE),
+      
+    #### star alignments ####
+    expand("{data}/star/{sample}_sorted.bam",
+            data=DATA, sample = SAMPLE),
+    expand("{data}/star/{sample}_sorted.bam.bai",
+            data=DATA, sample = SAMPLE),
+
+    #### IRFinder ####
+    #path.join(DBASES, "irf_annotations",
+    #"logs", "complete.txt"),
+    #expand("{data}/irfinder/{sample}/IRFinder-IR-dir.txt",
+    #        data=DATA, sample = SAMPLE),
+
+    #### bigwigs ####
+    expand("{data}/bigwigs/{sample}_{orient}.bw",
+      data=DATA, sample = SAMPLE, orient = ["fwd", "rev", "rev_neg"]),
+
+    #### qc ####
+    expand(path.join("{data}", "qc", "fastqc", "{sample}_fastqc/summary.txt"),
+      data=DATA, sample = SAMPLE)
+
+include: "rules/qc.snake"    
+include: "rules/cutadapt.snake"
+include: "rules/primary_expression.snake"
+include: "rules/star.snake"
+include: "rules/make_bigwigs.snake"

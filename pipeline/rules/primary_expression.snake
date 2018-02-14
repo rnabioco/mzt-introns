@@ -1,0 +1,188 @@
+
+""" calculate primary expression levels """ 
+
+def _strandedness(wildcards):
+    
+    eichhorn_libs = [
+    "SRR3710279", 
+    "SRR3710280",
+    "SRR3710285",
+    "SRR3710286",
+    "SRR3710291",
+    "SRR3710292",
+    "SRR3710293",
+    "SRR3710294",
+    "SRR3710299"
+    ]
+    if wildcards.sample in eichhorn_libs:
+      strand = 'forward'
+    else:
+      strand = 'reverse'
+    return strand
+
+def _lib_type(wildcards):
+    
+    eichhorn_libs = [
+    "SRR3710279", 
+    "SRR3710280",
+    "SRR3710285",
+    "SRR3710286",
+    "SRR3710291",
+    "SRR3710292",
+    "SRR3710293",
+    "SRR3710294",
+    "SRR3710299"
+    ]
+    if wildcards.sample in eichhorn_libs:
+      strand = 'SF'
+    else:
+      strand = 'SR'
+
+    return strand
+    
+rule rsem:
+    """
+    run RSEM on deduplicated fastqs 
+    RSEM-1.3.0
+    """
+    input:
+      R1 = "{data}/fastq/trimmed/{sample}_trimmed.fastq.gz",
+      idx = path.join(DBASES, "rsem", "primary_transcript_db.grp"),
+    output:
+      path.join("{data}", "rsem", "{sample}", "{sample}.isoforms.results")
+    params:
+      strand = _strandedness,
+      idx_prefix = path.join(DBASES, "rsem", "primary_transcript_db"),
+      outname = path.join("{data}", "rsem", "{sample}", "{sample}"),
+      job_name = "rsem_run",
+      memory = "select[mem>12] rusage[mem=12]",
+    log:
+      path.join("{data}", "rsem", "logs", "{sample}")
+    threads: 12
+    resources: all_threads=12
+    shell:
+      """
+      rsem-calculate-expression \
+        --strandedness {params.strand} \
+        --no-bam-output --estimate-rspd  \
+        -p {threads} \
+        <(gunzip -c {input.R1}) \
+        {params.idx_prefix} \
+        {params.outname}
+      """
+
+
+rule rsem_index:
+    """
+    Prepare indexes for RSEM 
+    RSEM-1.3.0
+    """
+    input:
+      gtf = path.join(DBASES, "primary_transcript_db.gtf"),
+      fasta = GENOME
+    output:
+      path.join(DBASES, "rsem", "primary_transcript_db.transcripts.fa"),
+      path.join(DBASES, "rsem", "primary_transcript_db.seq"),
+      path.join(DBASES, "rsem", "primary_transcript_db.grp"),
+    params:
+      outname = path.join(DBASES, "rsem", "primary_transcript_db"),
+      job_name = "rsem_idx",
+      memory = "select[mem>4] rusage[mem=4]",
+    log:
+      path.join(DBASES, "logs", "generate_primary_transcript_index.txt")
+    threads: 12
+    resources: all_threads=12
+    shell:
+      """
+      rsem-prepare-reference \
+       --gtf {input.gtf} \
+       --bowtie \
+       -p {threads} \
+       {input.fasta} \
+       {params.outname}
+      """
+
+rule salmon_idx:
+    """
+    build salmon on pre-mRNA fasta
+    Salmon v0.9.1
+    """
+    input:
+      fasta = path.join(DBASES, "rsem", "primary_transcript_db.transcripts.fa"),
+      gtf = path.join(DBASES, "primary_transcript_db.gtf"),
+    output:
+      path.join(DBASES, "salmon", "hash.bin")
+    params:
+      outname = path.join(DBASES, "salmon"),
+      job_name = "salmon_idx",
+      memory = "select[mem>50] rusage[mem=50]",
+    log:
+      path.join(DBASES, "logs", "generate_primary_transcript_salmon_index.txt")
+    threads: 12
+    resources: all_threads=12
+    shell:
+      """
+      salmon index \
+        -p {threads} \
+        -t {input.fasta} \
+        --type "quasi" \
+        -i {params.outname}
+      """
+
+rule salmon_primary:
+    """
+    run salmon on pre-mRNA indexes
+    Salmon v0.9.1
+    """
+    input:
+      idx = path.join(DBASES, "salmon", "hash.bin"),
+      R1 = "{data}/fastq/trimmed/{sample}_trimmed.fastq.gz",
+      gtf = path.join(DBASES, "primary_transcript_db.gtf"),
+    output:
+      path.join("{data}", "salmon", "{sample}", "quant.sf")
+    params:
+      lib_type = _lib_type,
+      idx = path.join(DBASES, "salmon"),
+      out_dir = path.join("{data}", "salmon", "{sample}"),
+      job_name = "salmon_fishin",
+      memory = "select[mem>30] rusage[mem=30]",
+    log:
+      path.join("{data}", "salmon", "logs", "{sample}")
+    threads: 12
+    resources: all_threads=12
+    shell:
+      """
+      salmon quant \
+        -i {params.idx} \
+        -r {input.R1} \
+        -o {params.out_dir} \
+        -p {threads} \
+        --numBootstraps 50 \
+        --libType {params.lib_type} \
+        -g {input.gtf}
+      """
+
+rule primary_transcript_gtf:
+    """
+    Append primary transcript records to GTF annotations
+    src/add_primary_transcripts.py
+    """
+    input:
+      TRANSCRIPTS
+    output:
+      path.join(DBASES, "primary_transcript_db.gtf") 
+    params:
+      job_name = "gen_primary_txs",
+      memory = "select[mem>4] rusage[mem=4]",
+    log:
+      path.join(DBASES, "logs", "generate_primary_transcript_db.txt")
+    resources: all_threads=1
+    shell:
+      """
+      python3 {SRC}/add_primary_transcripts.py \
+        -i {input} \
+        -r "gene" \
+        -a "gene_id" > {output}
+      """
+
+

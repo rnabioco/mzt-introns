@@ -1,0 +1,527 @@
+---
+title: "Examine intronic signals during MZT in Drosophila embryos"
+author: "Kent Riemondy RBI"
+date: `r Sys.Date()`
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+## Background
+
+The Maternal to Zygotic Transistion (MZT) is a developmental stage in which the embryo initiates transcription of mRNAs from the zygotic genome. Maternally deposited mRNAs begin to be degraded and are replaced by zygotic messages. 
+
+Zygotic mRNAs can be distinguished from maternal mRNAs, due to the presence or higher proportions of introns. Maternally derived mRNAs are likely to be spliced, and any remaining intron lariat degraded prior to fertilization. In contrast zygotic transcription will produce mRNAs in that need to be spliced, and thus there will be some proportion of unspliced mRNA, and intron lariat derivied from the zygotic transcripts. 
+
+Using ribo-zero depleted total-RNA-Seq libraries, one would expect to be able to recover intronic mRNA fragements, and be able to assign for each transcript, the relative proportion of each transcript that is maternally or zygotically derived. 
+
+
+## Approach
+
+Each total RNA-Seq lib was trimmed to remove Tru-Seq adapters (Rissland libraries), or barcodes and custom 3' adapter (Bartel libraries). The trimmed reads were then processed with `RSEM` to estimate `TPMs` for each transcript. The `RSEM` transcript database was modified to include a pre-mRNA entry, which was designated as an exon that spanned the entire gene. This pre-mRNA annotation matches the `gene` entry from the annotaiton file. By including the pre-mRNA transcript in the `RSEM` database, one can get an estimate of the fraction of pre-mRNA or mature mRNA present in each sample. 
+
+First we'll examine the extent to which pre-mRNA transcripts increase during embryonic development. Then, if a clear increase is present, we can classify transcripts into a % maternal and % zygotic, and additional classify the temporal pattern of zygotic transcription i.e. are there distinct sets of early versus late transcripts, and do their transcriptional pattern suggest function (TF transcription prior to target activation/repression, miRNA transcription before target repression, RBP transcription prior to translational control, etc.)
+
+ 
+## RNA-Seq Libraries
+```{r load_libs}
+source("../../R/globals.r")
+```
+
+
+
+```{r get_metadata}
+mdata1 <- read_tsv(file.path(data_dir, "raw_data", "GSE83616_run_info_geo.txt"))
+mdata2 <- read_tsv(file.path(data_dir, "raw_data", "GSE98106_run_info_geo.txt"))
+
+
+#simplify mdata
+mdata1 <- dplyr::select(mdata1,
+                       Run_s, 
+                       developmental_stage_s,
+                       genotype_s,
+                       source_name_s,
+                       Assay_Type_s)
+
+#simplify mdata
+mdata2 <- dplyr::select(mdata2,
+                       Run_s, 
+                       developmental_stage_s,
+                       rip_antibody_s,
+                       source_name_s,
+                       strain_s)
+
+# select relevant libs
+mdata2 <- dplyr::filter(mdata2,
+                     source_name_s == "Embryo",
+                     strain_s %in% c("w1118", "eGFP-ME31B"),
+                     rip_antibody_s == "none") %>% 
+  dplyr::select(-rip_antibody_s)
+
+mdata1 <- dplyr::filter(mdata1,
+                     genotype_s == "wt",
+                     Assay_Type_s == "RNA-Seq") %>% 
+  dplyr::select(-Assay_Type_s) %>% 
+  dplyr::rename(strain_s = genotype_s)
+
+
+mdata <- list(mdata1, mdata2)
+names(mdata) <- c("eichhorn", "rissland")
+
+mdata <- bind_rows(mdata, .id = "study")
+#cleanup names
+mdata <- mdata %>% 
+  mutate(source_name_s = ifelse(source_name_s == "embryos", 
+                                "Embryo",
+                                source_name_s),
+         developmental_stage_s = str_replace(developmental_stage_s,
+                                             " h ",
+                                             " hr "))
+
+# cleanup colnames
+colnames(mdata) <- str_replace(colnames(mdata),
+                               "_s$",
+                               "")
+
+mdata
+```
+
+
+## Alignment %
+
+```{r alignment}
+read_delim("../data/rsem/logs/align_summary.txt",
+         col_names = F, delim = " ") -> alignment
+
+colnames(alignment) <- c("library", "% of reads with at least 1 reported alignment")
+
+alignment %>% 
+  mutate(library = str_replace(library, ".err:#", ""),
+         `% of reads with at least 1 reported alignment` = str_replace_all(`% of reads with at least 1 reported alignment`, 
+                                                                       "[\\(\\)]", "")) %>% 
+  unique() -> alignment
+
+inner_join(alignment, 
+          mdata, 
+          by = c("library" = "Run"))
+```
+
+## Load in RSEM data
+
+```{r load_dat, message = F}
+files <- dir("../data/rsem/",
+            recursive = T,
+            pattern = "*isoforms.results",
+            full.names = T)
+
+dat <- map(files, read_tsv)
+
+# name with libraryID
+names(dat) <- basename(files) %>% 
+  str_split(., "[.]", simplify = T) %>% 
+  .[, 1]
+
+dat <- bind_rows(dat, .id = "libraryID")
+```
+
+
+```{r join}
+
+#join with main data
+dat <- inner_join(dat, 
+                 mdata,
+                by = c("libraryID" = "Run"))
+```
+
+
+```{r drop_monoexonic}
+gtf <- read_tsv("~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf",
+                comment = "#", col_names = F)
+names(gtf) <- c("chrom",
+                "source",
+                "feature",
+                "start",
+                "end",
+                "none",
+                "strand",
+                "frame",
+                "attributes")
+
+gtf_attrs <- gtf$attributes
+gene_ids <- gtf_attrs %>% 
+  str_split(";") %>% 
+  map(., ~str_subset(.x, "gene_id")) %>% 
+  unlist() 
+gtf$gene_ids <- gene_ids
+
+gtf_summary <- dplyr::filter(gtf, feature == "exon") %>% 
+  dplyr::select(chrom, start, end, strand, gene_ids) %>% 
+  unique() %>% 
+  group_by(gene_ids) %>% 
+  bed_merge() %>% 
+  summarize(total_exons = n())
+
+monoexonic_genes <- dplyr::filter(gtf_summary, 
+                                  total_exons == 1) %>% 
+  dplyr::pull(gene_ids) %>% 
+  str_match(., 'gene_id \\\"([^\\\\]+)\\\"') %>% 
+  .[, 2]
+  
+```
+
+
+```{r remove_monoexonic}
+
+dat <- anti_join(dat, 
+                    data_frame(gene_id = monoexonic_genes),
+                 by = "gene_id")
+
+# classify transcripts as primary or mature
+dat %>% 
+  mutate(type = ifelse(str_detect(transcript_id, 
+                                  "^pre_"), 
+                       "pre", "mature")) -> dat
+
+  
+
+# drop unneeded data
+dat <- dplyr::select(dat,
+                     -c(length:expected_count, 
+                        FPKM, 
+                        IsoPct))
+```
+
+Only multiexonic messages will be used for calculating the proportion of pre-mRNA messages
+
+```{r, calc_premRNA}
+# sum primary and mature TPMs for each gene 
+dplyr::select(dat, TPM, gene_id, 
+              libraryID, type, developmental_stage,
+              study, strain) %>% 
+  group_by(gene_id, libraryID, 
+           developmental_stage, type,
+           strain) %>% 
+  summarize(total_tpm = sum(TPM, na.rm = F)) %>% 
+  ungroup() -> summary_dat
+
+summary_dat %>% 
+  group_by(gene_id, libraryID, 
+           developmental_stage,
+           strain) %>% 
+  dplyr::arrange(type, .by_group = T) %>% 
+  mutate(primary_ratio = nth(total_tpm, 2) / (nth(total_tpm, 2) + nth(total_tpm, 1)))  -> tpm_summary
+
+
+tpm_summary %>% 
+  group_by(gene_id) %>% 
+  mutate(max_tpm = mean(total_tpm)) %>% 
+  dplyr::filter(max_tpm > 1) -> tpm_summary
+
+tpm_summary %>% 
+  dplyr::select(-type, -total_tpm) %>% 
+  unique() -> tpm_filtered
+
+tpm_filtered %>% 
+  group_by(gene_id, 
+           developmental_stage,
+           strain) %>% 
+  summarize(mean_primary = mean(primary_ratio,
+                                na.rm = T)) -> tpm_filtered
+
+#ggplot(tpm_filtered, aes(developmental_stage, 
+#                mean_primary)) +
+#  geom_violin() +
+#  facet_wrap(~strain)
+#
+#summary_dat %>% 
+#  group_by(gene_id) %>% 
+#  mutate(max_tpm = max(total_tpm)) %>% 
+#  dplyr::filter(max_tpm > 1) %>% 
+#  group_by(developmental_stage, type, strain) %>% 
+#  summarize(total_tpm = sum(total_tpm, 
+#                            na.rm = F)) %>%
+#  group_by(developmental_stage, strain) %>% 
+#  mutate(percent = 100 * (total_tpm / sum(total_tpm))) -> total_summary
+#
+#tpm_filtered %>% 
+#  group_by(developmental_stage, strain) %>% 
+#  summarize(mean_ratio = mean(mean_primary, 
+#                            na.rm = T), 
+#            percent = 100 * mean_ratio) -> mean_ratio
+#
+#ggplot(total_summary, 
+#       aes(developmental_stage, percent)) +
+#  geom_bar(aes(fill = type), stat = "identity") + 
+#  facet_grid(~strain, scale = "free") +
+#  labs(x = "Developmental Stage",
+#       y = "Percent of TPMs for \nmature or unprocessed\n transcripts") +
+#  scale_fill_brewer(palette = "Set1",
+#                    name = "Transcript Type",
+#                    breaks = c("pre", "mature"),
+#                    labels = c("pre-mRNA", "mature-mRNA")) +
+#  theme(
+#    axis.text.x = element_text(angle = 90,
+#                               vjust = 0.5,
+#                               hjust = 0.5)
+#  )
+
+
+#ggplot(mean_ratio, 
+#       aes(developmental_stage, percent)) +
+#  geom_bar(stat = "identity") + 
+#  facet_grid(~strain, scale = "free") +
+#  labs(x = "Developmental Stage",
+#       y = "Percent of TPMs for \nmature or unprocessed\n transcripts") +
+#  scale_fill_brewer(palette = "Set1",
+#                    name = "Transcript Type",
+#                    breaks = c("pre", "mature"),
+#                    labels = c("pre-mRNA", "mature-mRNA")) +
+#  theme(
+#    axis.text.x = element_text(angle = 90,
+#                               vjust = 0.5,
+#                               hjust = 0.5)
+#  )
+
+
+ggplot(tpm_filtered, 
+       aes(developmental_stage, mean_primary)) +
+  geom_boxplot(coef = 1e3) + 
+  facet_grid(~strain, scale = "free") +
+  labs(x = "Developmental Stage",
+       y = "pre-mRNA TPM / mature + pre-mRNA TPM") +
+  scale_fill_brewer(palette = "Set1",
+                    name = "Transcript Type",
+                    breaks = c("pre", "mature"),
+                    labels = c("pre-mRNA", "mature-mRNA")) +
+  theme(
+    axis.text.x = element_text(angle = 90,
+                               vjust = 0.5,
+                               hjust = 0.5)
+  )
+
+tpm_filtered %>% 
+  group_by(gene_id, developmental_stage) %>% 
+  summarize(mean_primary = mean(mean_primary, na.rm = T)) %>% 
+  mutate(strain = "all strains") %>% 
+  bind_rows(tpm_filtered, .) %>% 
+  arrange(gene_id) -> all_combined
+
+ggplot(all_combined, 
+       aes(developmental_stage, mean_primary)) +
+  geom_boxplot(coef = 1e3) + 
+  facet_grid(~strain, scale = "free") +
+  labs(x = "Developmental Stage",
+       y = "pre-mRNA TPM / mature TPM") +
+  scale_fill_brewer(palette = "Set1",
+                    name = "Transcript Type",
+                    breaks = c("pre", "mature"),
+                    labels = c("pre-mRNA", "mature-mRNA")) +
+  theme(
+    axis.text.x = element_text(angle = 90,
+                               vjust = 0.5,
+                               hjust = 0.5)
+  )
+#ggsave("total_transcript_distribution.pdf")
+```
+
+
+```{r tpm_v_premRNA_ratio}
+tpm_summary %>% 
+  select(gene_id, total_tpm, primary_ratio, libraryID) %>% 
+  group_by(gene_id, libraryID) %>%
+  mutate(gene_total_tpm = sum(total_tpm)) %>% 
+  group_by(gene_id) %>% 
+  summarize(mean_tpm = mean(gene_total_tpm),
+            mean_pre_ratio = mean(primary_ratio, na.rm = T)) -> tpm_v_ratio
+
+ggplot(tpm_v_ratio, aes(mean_tpm, mean_pre_ratio)) + 
+  geom_point() +
+  scale_x_log10()
+
+```
+
+```{r find_increasing}
+tpm_filtered %>% 
+  ungroup() %>% 
+  split(., .$strain) -> per_strain_tpms
+
+set_rowids <- function(df, colname = "gene_id"){
+  rownames(df) <- df[[colname]]
+  df[, 1] <- NULL
+  df
+}
+
+map(per_strain_tpms, ~.x %>% 
+  spread(developmental_stage, mean_primary) %>% 
+    select(-strain) %>% 
+    as.data.frame() %>%
+    set_rowids(.)) -> mats
+
+#compute z-scores
+
+map(mats, 
+    ~t(scale(t(.x)))) -> zmats
+
+map2(zmats,
+     names(zmats),
+     ~Heatmap(na.omit(.x), name = "pre-mRNA proportion\n (Z-Score)",
+                    show_row_names = F, 
+                    show_row_dend = F,
+              column_title = .y,
+                )) ->plts
+
+plts
+
+all_mat <- do.call(cbind, mats)
+all_zmat <- t(scale(t(all_mat)))
+
+Heatmap(na.omit(all_zmat), name = "pre-mRNA proportion\n (Z-Score)",
+        column_title = "All datasets",
+                    show_row_names = F, 
+                    show_row_dend = F) -> all_plt
+
+all_plt
+```
+
+
+```{r}
+tpm_summary %>% 
+  select(gene_id, developmental_stage, strain, total_tpm, type) %>% 
+  split(., .$type) -> tpm_split 
+
+map(tpm_split, ~.x %>% 
+  mutate(col_id = paste0(strain, "::", developmental_stage)) %>% 
+  select(-developmental_stage, -type, -strain) %>% 
+  spread(col_id, total_tpm) %>% 
+    as.data.frame() %>%
+    set_rowids(.)) -> tpm_mats
+
+map(tpm_mats, ~cor(.x, method = "spearman")) -> tpm_cors
+
+map2(tpm_cors,
+    c("Mature Transcripts", 
+      "pre-mRNA Transcripts"),
+    ~Heatmap(.x, 
+             column_title = .y,
+             name = "Spearman Correlation\nof TPM values"))
+```
+
+
+
+
+## Classify transcripts into maternal or zygotic
+
+Next I'll try to classify transcripts into catagories based upon their abundance changes throughout embryogenesis. 
+
+First need to identify transcripts that are differentially expressed between maternal and zygotic states. Let's try a two state comparison of 
+pre MZT and post MZT, which based on the correlation matrix shown above, is strongly segregated between the two.
+
+```{r}
+library(tximport)
+library(edgeR)
+tx2gene_mapping <- dplyr::select(dat, 
+                         transcript_id, 
+                         gene_id) %>% 
+  unique() %>% 
+  as.data.frame()
+
+files <- dir("../data/rsem/",
+            recursive = T,
+            pattern = "*isoforms.results",
+            full.names = T)
+
+sra_ids <- basename(files) %>% 
+  str_split(., "\\.", simplify = T) %>%
+  .[, 1]
+
+keep <- sra_ids %in% mdata$Run
+files <- files[keep]
+sra_ids <- sra_ids[keep]
+
+all_dat <- map(files, read_tsv)
+all_pre <- map(all_dat, 
+               ~dplyr::filter(.x,
+                              str_detect(transcript_id, "^pre_")))
+
+all_mat <- map(all_dat, 
+               ~dplyr::filter(.x,
+                              !str_detect(transcript_id, "^pre_")))
+
+dir.create("rsem_modified", recursive = T)
+walk2(all_pre,
+      basename(files),
+      ~write_tsv(.x, file.path("rsem_modified", paste0(.y, ".premRNA"))))
+
+walk2(all_mat,
+      basename(files),
+      ~write_tsv(.x, file.path("rsem_modified", paste0(.y, ".maturemRNA"))))
+
+files <- dir("rsem_modified", full.names = T)
+
+mature <- str_subset(files, "maturemRNA$")
+pre <- str_subset(files, "premRNA$")
+
+matures <- tximport(mature, 
+                    countsFromAbundance = "lengthScaledTPM",
+         type = "none",
+         tx2gene = tx2gene_mapping,
+         geneIdCol = "gene_id",
+         txIdCol = "transcript_id",
+         abundanceCol = "TPM",
+         countsCol = "expected_count",
+         lengthCol = "effective_length")
+
+pres <- tximport(pre, 
+                    countsFromAbundance = "lengthScaledTPM",
+         type = "none",
+         tx2gene = tx2gene_mapping,
+         geneIdCol = "gene_id",
+         txIdCol = "transcript_id",
+         abundanceCol = "TPM",
+         countsCol = "expected_count",
+         lengthCol = "effective_length")
+
+# make metadata sample ordered by columns in count matrix
+
+pdata <- inner_join(data_frame(Run = sra_ids),
+           mdata, by = "Run")
+
+pdata <- mutate(pdata, 
+                mzt = ifelse(str_detect(developmental_stage,
+                                        "^[2345]-[3456] hr embryo"),
+                             "zygotic",
+                             "maternal"))
+
+y <- DGEList(matures$counts)
+y <- calcNormFactors(y)
+design <- model.matrix(~mzt, data = pdata)
+v <- voom(y, design)
+fit <- lmFit(v, design)
+fit <- eBayes(fit)
+topTable(fit, coef=ncol(design))
+
+
+y <- DGEList(pres$counts)
+y <- calcNormFactors(y)
+design <- model.matrix(~mzt, data = pdata)
+v <- voom(y, design)
+logCPM <- cpm(y, log=TRUE, prior.count=1)
+fit_pre <- lmFit(logCPM, design)
+fit_pre <- eBayes(fit_pre)
+topTable(fit_pre, coef=ncol(design))
+```
+
+To do:
+  - fix DE-gene expression analysis. Too many sig genes (>5K).
+  - classify transcripts as maternal, mixed, or zygotic based on TPMs
+  - classify early versus late zygotic and look for Zelda (zfl)
