@@ -1,4 +1,4 @@
-# config for RNA-Variant discovery snakemake pipeline #
+# config for pre-mRNA quantification snakemake pipeline #
  
 # directory for data
 DATA: 
@@ -12,24 +12,68 @@ SRC:
 DBASES: 
   "../dbases" 
 
-GENOME:
-  "/vol3/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
-
-GENOME_DIR:
-  "/vol3/home/riemondy/Projects/shared_dbases/star/drosophila/BDGP6"
+GENOMES:
+    drosophila: "/vol3/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
+    xenopus:  "/vol3/home/riemondy/Projects/shared_dbases/genomes/xenopus/jgi_xenla9.2/XL9_2.fa"
+    zebrafish:  "/vol3/home/riemondy/Projects/shared_dbases/genomes/zebrafish/GRCz10/Danio_rerio.GRCz10.dna.toplevel.fa"
 
 TRANSCRIPTS:
-    "/vol3/home/riemondy/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
-
-TRANSCRIPTS_FA:
-  "/vol3/home/riemondy/Projects/shared_dbases/transcript_fastas/gencode.v26.transcripts.fa.gz"
-
+    drosophila: "/vol3/home/riemondy/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
+    xenopus: "/vol3/home/riemondy/Projects/shared_dbases/annotation/xenopus/jgi_xenla9.2/XENLA_9.2_Xenbase.gtf"
+    zebrafish: "/vol3/home/riemondy/Projects/shared_dbases/annotation/zebrafish/GRCz10/Danio_rerio.GRCz10.91.gtf"
 
 CHROM_SIZES:
-  "/vol3/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
+    drosophila: "/vol3/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
+    xenopus:  "/vol3/home/riemondy/Projects/shared_dbases/genomes/xenopus/jgi_xenla9.2/XL9_2.fa.fai"
+    zebrafish:  "/vol3/home/riemondy/Projects/shared_dbases/genomes/zebrafish/GRCz10/Danio_rerio.GRCz10.dna.toplevel.fa.fai"
+
+GENOME_DIRS:
+    drosophila: "/vol3/home/riemondy/Projects/shared_dbases/star/drosophila/BDGP6"
+    xenopus: "/vol3/home/riemondy/Projects/shared_dbases/star/xenopus/jgi_xenla9.2"
+    zebrafish: "/vol3/home/riemondy/Projects/shared_dbases/star/zebrafish/GRCz10"
+
 
 # path to STAR SJ.out.tab file
 # Can be single file or wildcard expression matching multiple files
 SPLICE_JUNCTS:
   "../data/star/firstpass/*_SJ.out.tab"
 
+LIB_MAP:
+    SRR3710279: "EICHHORN"
+    SRR3710280: "EICHHORN"
+    SRR3710285: "EICHHORN"
+    SRR3710286: "EICHHORN"
+    SRR3710291: "EICHHORN"
+    SRR3710292: "EICHHORN"
+    SRR3710293: "EICHHORN"
+    SRR3710294: "EICHHORN"
+    SRR3710299: "EICHHORN"
+    SRR1039864: "EICHHORN"
+    SRR1039867: "EICHHORN"
+    SRR1039870: "EICHHORN"
+    SRR1039882: "EICHHORN"
+    SRR1039884: "EICHHORN"
+    SRR1146573: "EICHHORN"
+    SRR5469986: "RISSLAND"
+    SRR5469988: "RISSLAND"
+    SRR5469990: "RISSLAND"
+    SRR5469992: "RISSLAND"
+    SRR5469994: "RISSLAND"
+    SRR5469996: "RISSLAND"
+    SRR5469998: "RISSLAND"
+    SRR5470000: "RISSLAND"
+    SRR5470002: "RISSLAND"
+    SRR5470004: "RISSLAND"
+    SRR5470006: "RISSLAND"
+    SRR5470008: "RISSLAND"
+    SRR5970577: "RISSLAND"
+    SRR5970579: "RISSLAND"
+    SRR5970580: "RISSLAND"
+    
+EICHHORN:
+    trim: " -a 'TCGTATGCCGTCTTCTGCTT' -u 8 "
+    map: " --libType 'SF' "
+
+RISSLAND:
+    trim: " -a 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC' "
+    map: " --libType 'SR' "

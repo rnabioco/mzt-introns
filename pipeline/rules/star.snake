@@ -6,22 +6,23 @@ rule star_align:
     STAR_2.5.1b
     """
     input:
-      R1 = "{data}/fastq/trimmed/{sample}_trimmed.fastq.gz",
-      genome = path.join(GENOME_DIR, "Genome")
+      R1 = "{data}/fastq/trimmed/{species}/{sample}_trimmed.fastq.gz",
+      idx_dummy_file = path.join("{data}", "star", "logs", "{species}_index_tracking.txt"), 
     output:
-      bam = "{data}/star/{sample}_sorted.bam",
-      bai = "{data}/star/{sample}_sorted.bam.bai",
-      bg1 = "{data}/star/{sample}_Signal.Unique.str1.out.bg",
-      bg2 = "{data}/star/{sample}_Signal.Unique.str2.out.bg"
+      bam = "{data}/star/{species}/{sample}_sorted.bam",
+      bai = "{data}/star/{species}/{sample}_sorted.bam.bai",
+      bg1 = "{data}/star/{species}/{sample}_Signal.Unique.str1.out.bg",
+      bg2 = "{data}/star/{species}/{sample}_Signal.Unique.str2.out.bg"
     params:
       use_sjs =  "yes" if SPLICE_JUNCTS else "no", 
       splice_junctions = SPLICE_JUNCTS if SPLICE_JUNCTS else "none",
       job_name = "star",
-      tmpbam = "{data}/star/{sample}_Aligned.sortedByCoord.out.bam",
-      out = "{data}/star/{sample}_",
+      tmpbam = "{data}/star/{species}/{sample}_Aligned.sortedByCoord.out.bam",
+      genome = lambda wildcards: GENOME_DIRS[wildcards.species],
+      out = "{data}/star/{species}/{sample}_",
       memory = "select[mem>60] rusage[mem=60]",
     log:
-      "{data}/star/logs/{sample}_align.txt"
+      "{data}/star/logs/{species}/{sample}_align.txt"
     message:
       "running star alignments "
     threads:
@@ -39,7 +40,7 @@ rule star_align:
       fi 
 
       STAR \
-        --genomeDir {GENOME_DIR}  \
+        --genomeDir {params.genome}  \
         --runThreadN {threads} \
         --outBAMsortingThreadN {threads} \
         --readFilesIn {input.R1}  \
@@ -68,24 +69,31 @@ rule star_align:
 
 rule star_idx:
   input:
-    GENOME
+    lambda wildcards: GENOMES[wildcards.species]
   output:
-    path.join(GENOME_DIR, "Genome")
+    path.join("{data}", "star", "logs", "{species}_index_tracking.txt"), 
   params:
+    genome_dir = lambda wildcards: GENOME_DIRS[wildcards.species],
+    genome = lambda wildcards: GENOMES[wildcards.species],
+    transcripts = lambda wildcards: TRANSCRIPTS[wildcards.species],
     job_name = "star_idx",
     memory = "select[mem>65] rusage[mem=65]",
-  log:
-    path.join(GENOME_DIR, "logs") 
+  #log:
+  #  path.join(GENOME_DIRS, "logs") 
   message:
     "building star index "
   threads:
     24
+  resources: all_threads=24
   shell:
     """
     STAR --runMode genomeGenerate \
-      --genomeDir {GENOME_DIR}  \
-      --genomeFastaFiles {GENOME} \
+      --genomeDir {params.genome_dir}  \
+      --genomeFastaFiles {params.genome} \
       --runThreadN {threads} \
-      --sjdbGTFfile {TRANSCRIPTS} \
+      --sjdbGTFfile {params.transcripts} \
       --limitGenomeGenerateRAM 60000000000
+
+    # create dummy file
+    touch {output}
     """

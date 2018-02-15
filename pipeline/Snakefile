@@ -11,12 +11,16 @@ configfile: "config.yaml"
 DATA = config["DATA"]
 SRC = config["SRC"]
 DBASES = config["DBASES"]
-TRANSCRIPTS = config["TRANSCRIPTS"]
-GENOME = config["GENOME"]
-GENOME_DIR = config["GENOME_DIR"]
-CHROM_SIZES = config["CHROM_SIZES"]
 SPLICE_JUNCTS = config["SPLICE_JUNCTS"]
 
+# The following are all dictionaries that are accessed using functions in 
+# the snakemake rules
+
+LIB_MAP = config["LIB_MAP"]
+GENOMES = config["GENOMES"]
+TRANSCRIPTS = config["TRANSCRIPTS"]
+CHROM_SIZES = config["CHROM_SIZES"]
+GENOME_DIRS = config["GENOME_DIRS"]
 
 # find all splice junction files (no error if none)
 # if no splice junctions have been generated, then run pipeline through
@@ -28,32 +32,31 @@ if SPLICE_JUNCTS:
   SPLICE_JUNCTS = glob(SPLICE_JUNCTS)
   SPLICE_JUNCTS = " ".join(SPLICE_JUNCTS)
 
-SAMPLE, = glob_wildcards(path.join(DATA, 
-                    "raw_data","{sample}.fastq.gz"))
+SPECIES, SAMPLES, = glob_wildcards(path.join(DATA, 
+                    "raw_data",
+                    "{species}",
+                    "{samples}.fastq.gz"))
+
+print("processing the following libraries")
+[print("library {} from species {} from experiment {}".format(x,
+                                                              SPECIES[i],
+                                                              LIB_MAP[x])) for i, x in enumerate(SAMPLES)]
+
 
 rule all:
   input:
-    #### rsem ####
-    expand(path.join("{data}", "fastq", "trimmed",
-    "{sample}_trimmed.fastq.gz"), 
-            data=DATA, sample = SAMPLE),
-    
-    path.join(DBASES, "primary_transcript_db.gtf"),
-    path.join(DBASES, "rsem", "primary_transcript_db.transcripts.fa"),
-    path.join(DBASES, "rsem", "primary_transcript_db.seq"),
-    path.join(DBASES, "rsem", "primary_transcript_db.grp"),
-    expand("{data}/rsem/{sample}/{sample}.isoforms.results",
-            data=DATA, sample = SAMPLE),
-
-    #### salmon ####
-    expand(path.join("{data}", "salmon", "{sample}", "quant.sf"),
-            data=DATA, sample = SAMPLE),
+    expand(path.join(DATA, "salmon", "{species}", "{sample}", "quant.sf"),
+            zip, sample = SAMPLES, species = SPECIES),
       
     #### star alignments ####
-    expand("{data}/star/{sample}_sorted.bam",
-            data=DATA, sample = SAMPLE),
-    expand("{data}/star/{sample}_sorted.bam.bai",
-            data=DATA, sample = SAMPLE),
+    expand(path.join(DATA, "star", "logs", "{species}_index_tracking.txt"),
+            zip, species = SPECIES),
+
+    expand(path.join(DATA, "star", "{species}", "{sample}_sorted.bam"),
+            zip, sample = SAMPLES, species = SPECIES),
+    
+    expand(path.join(DATA, "star", "{species}", "{sample}_sorted.bam.bai"),
+            zip, sample = SAMPLES, species = SPECIES),
 
     #### IRFinder ####
     #path.join(DBASES, "irf_annotations",
@@ -62,15 +65,15 @@ rule all:
     #        data=DATA, sample = SAMPLE),
 
     #### bigwigs ####
-    expand("{data}/bigwigs/{sample}_{orient}.bw",
-      data=DATA, sample = SAMPLE, orient = ["fwd", "rev", "rev_neg"]),
+    #expand("{data}/bigwigs/{sample}_{orient}.bw",
+    #  data=DATA, sample = SAMPLE, orient = ["fwd", "rev", "rev_neg"]),
 
-    #### qc ####
-    expand(path.join("{data}", "qc", "fastqc", "{sample}_fastqc/summary.txt"),
-      data=DATA, sample = SAMPLE)
+    ##### qc ####
+    expand(path.join(DATA, "qc", "fastqc", "{species}", "{sample}_fastqc/summary.txt"),
+      zip, sample = SAMPLES, species = SPECIES)
 
 include: "rules/qc.snake"    
 include: "rules/cutadapt.snake"
 include: "rules/primary_expression.snake"
 include: "rules/star.snake"
-include: "rules/make_bigwigs.snake"
+#include: "rules/make_bigwigs.snake"

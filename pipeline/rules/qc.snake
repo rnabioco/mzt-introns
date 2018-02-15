@@ -5,11 +5,11 @@ qc = path.join("{data}", "qc")
 
 rule fastqc:
   input:
-    R1 = path.join(raw, "{sample}.fastq.gz"),
+    R1 = path.join(raw, "{species}", "{sample}.fastq.gz"),
   output:
-    path.join(qc, "fastqc", "{sample}_fastqc/summary.txt"),
+    path.join(qc, "fastqc", "{species}", "{sample}_fastqc/summary.txt"),
   params:
-    out_dir = path.join(qc, "fastqc"),
+    out_dir = path.join(qc, "fastqc", "{species}"),
     job_name = "fastqc.{sample}",
     memory = "select[mem>16] rusage[mem=16]",
   log:

@@ -1,46 +1,36 @@
-""" rules for basic QC checks """ 
+""" rules for trimming """ 
 
 raw = path.join("{data}", "raw_data")
 
-eichhorn_libs = [
-    "SRR3710279", 
-    "SRR3710280",
-    "SRR3710285",
-    "SRR3710286",
-    "SRR3710291",
-    "SRR3710292",
-    "SRR3710293",
-    "SRR3710294",
-    "SRR3710299"
-    ]
-def adapt_seq(wildcards):
-    if wildcards.sample in eichhorn_libs:
-      adapt = 'TCGTATGCCGTCTTCTGCTT'
-    else:
-      adapt = 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC'
-    return adapt
+def _trim_settings(wildcards):
+  """ lookup global dictionary LIB_MAP via sample
+      wildcard and return settings for cutadapt 
+      based on library type definition 
+  """
+  id = os.path.basename(wildcards.sample)
+  if id in LIB_MAP:
+     lib_attrs = LIB_MAP[id]
+     trim_settings = config[lib_attrs]["trim"]
+  else:
+     print("WARNING: no trimming settings found for library: {}".format(id),
+       file = sys.stderr)
+     trim_settings = ""
 
-def adapt_trim(wildcards):
-    if wildcards.sample in eichhorn_libs:
-      trim = 8 
-    else:
-      trim = 0 
-    return trim 
+  return trim_settings
 
 rule cutadapt:
   input:
-    path.join(raw, "{sample}.fastq.gz"),
+    path.join(raw, "{species}", "{sample}.fastq.gz"),
   output:
-    path.join("{data}", "fastq", "trimmed", "{sample}_trimmed.fastq.gz") 
+    path.join("{data}", "fastq", "trimmed", "{species}", "{sample}_trimmed.fastq.gz") 
   params:
-    adapt = adapt_seq,
-    trim = adapt_trim,
+    settings = _trim_settings,
     job_name = "trim.{sample}",
     memory = "select[mem>4] rusage[mem=4]",
   log:
-    path.join("{data}", "fastq", "trimmed", "logs", "{sample}.txt") 
+    path.join("{data}", "fastq", "trimmed", "logs", "{species}", "{sample}.txt") 
   message:
-    " trimmin illumina adapters" 
+    " trimming illumina adapters" 
   threads:
     1
   resources: all_threads=1
@@ -48,8 +38,7 @@ rule cutadapt:
     """
     cutadapt \
       -m 18 \
-      -u {params.trim} \
-      -a {params.adapt} \
+      {params.settings} \
       -o {output} \
       {input} 
     """

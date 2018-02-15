@@ -32,15 +32,14 @@ module load bowtie/0.12.9
 # other programs (not in modules)
 # Salmon-0.8.2
 # FASTX toolkit 0.0.13
-# umi_tools v4.4
-# umitools="/vol1/software/modules-python/python3/3.6.1/bin/umi_tools"
-# RSEM-1.3.0
+# gffread
+#
 #### execute snakemake ####
 
 snakemake --drmaa "$args" \
     --snakefile Snakefile \
-    --jobs 72 \
-    --resources all_threads=72 \
+    --jobs 24 \
+    --resources all_threads=24 \
     --latency-wait 50 \
     --rerun-incomplete  \
     --configfile config.yaml 
