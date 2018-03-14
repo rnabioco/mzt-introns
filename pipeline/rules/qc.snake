@@ -3,17 +3,36 @@
 raw = path.join("{data}", "raw_data")
 qc = path.join("{data}", "qc")
 
+def _fq_types(wildcards):
+  """ lookup global dictionary LIB_MAP via sample
+      and lookup fastq suffixes
+  """
+  id = os.path.basename(wildcards.sample)
+  if id in LIB_MAP:
+     lib_attrs = LIB_MAP[id]
+     fq_types = config[lib_attrs]["fq"]
+     fq_names = [path.join(wildcards.data,
+                           "raw_data",
+                           wildcards.species, 
+                           wildcards.expt, 
+                           wildcards.sample + x) for x in fq_types]
+  else:
+     sys.exit("no fastq suffixes found for library: {}".format(id))
+
+  return fq_names
+
+
 rule fastqc:
   input:
-    R1 = path.join(raw, "{species}", "{sample}.fastq.gz"),
+    _fq_types, 
   output:
-    path.join(qc, "fastqc", "{species}", "{sample}_fastqc/summary.txt"),
+    path.join(qc, "fastqc", "{species}", "{expt}", "{sample}_fastqc/summary.txt"),
   params:
-    out_dir = path.join(qc, "fastqc", "{species}"),
+    out_dir = path.join(qc, "fastqc", "{species}", "{expt}"),
     job_name = "fastqc.{sample}",
     memory = "select[mem>16] rusage[mem=16]",
   log:
-    path.join(qc, "logs", "fastqc", "{sample}.txt") 
+    path.join(qc, "logs", "fastqc", "{expt}", "{sample}.txt") 
   message:
     "fastqc analysis of {wildcards.sample} "
   threads:
@@ -26,28 +45,6 @@ rule fastqc:
       -t {threads} \
       -f fastq \
       -o {params.out_dir} \
-      {input.R1}
+      {input}
     """
 
-#rule single_lib_stats:
-#  input:
-#    bam = "{data}/star/firstpass/{sample}.bam"
-#  output:
-#    bam_stat = path.join(qc, "rseqc", "{sample}_bam_stat.txt"),
-#    expt = path.join(qc, "rseqc", "{sample}_lib_type.txt"),
-#    dist = path.join(qc, "rseqc", "{sample}_read_dist.txt"),
-#  params:
-#    job_name = '{sample}.libstats',
-#    memory =  "select[mem>16] rusage[mem=16] span[hosts=1]"
-#  message:
-#    "getting alignment stats "
-#  log:
-#    path.join(qc, "logs", "rseqc", "{sample}.txt") 
-#  shell:
-#    """
-#    module load python
-#    bam_stat.py -i {input.bam} -q 10 > {output.bam_stat}
-#    infer_experiment.py -i {input.bam} -r {TRANSCRIPTS_BED} -q 10 > {output.expt}
-#    read_distribution.py -i {input.bam} -r {TRANSCRIPTS_BED} > {output.dist}
-#    module unload python
-#    """

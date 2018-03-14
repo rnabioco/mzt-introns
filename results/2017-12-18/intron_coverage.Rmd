@@ -11,11 +11,11 @@ library(valr)
 library(tidyverse)
 library(rtracklayer)
 library(doParallel)
+source("../../R/globals.r")
 ```
 
 
 ## Examine read distribution surrounding intron-exon junctions
-  
   
 ```{r bw_io_function}
 
@@ -94,7 +94,7 @@ intron_bed <- intron_bed %>%
 
 ```{r generate_windows}
 # drop last intron and calc position in strand specific manner
-ss_5p <- intron_bed %>% 
+ss_3p <- intron_bed %>% 
   group_by(gene_id) %>%
   arrange(score, .by_group = TRUE) %>% 
   dplyr::slice(1:(n() - 1)) %>% 
@@ -107,7 +107,7 @@ ss_5p <- intron_bed %>%
                       end))
 
 # drop first intron
-ss_3p <- intron_bed %>% 
+ss_5p <- intron_bed %>% 
   group_by(gene_id) %>%
   arrange(score, .by_group = TRUE) %>% 
   dplyr::slice(2:n()) %>% 
@@ -128,13 +128,11 @@ splice_slop <- map(splice_pos,
 # single nucleotide coverage
 splice_windows_plus <- map(splice_slop,
                         ~dplyr::filter(.x, strand == "+") %>%  
-                          bed_makewindows(genome,
-                                         win_size = 1))
+                          bed_makewindows(win_size = 1))
  
 splice_windows_minus <- map(splice_slop,
                         ~dplyr::filter(.x, strand == "-") %>%  
-                          bed_makewindows(genome,
-                                         win_size = 1,
+                          bed_makewindows(win_size = 1,
                                          reverse = TRUE))
 
 splice_windows <- map2(splice_windows_plus, 
@@ -145,8 +143,8 @@ splice_windows <- map2(splice_windows_plus,
 ## generate coverage summaries
 
 ```{r mdata}
-mdata1 <- read_tsv("../data/raw_data/GSE83616_run_info_geo.txt")
-mdata2 <- read_tsv("../data/raw_data/GSE98106_run_info_geo.txt")
+mdata1 <- read_tsv(file.path(data_dir, "raw_data", "drosophila", "GSE83616_run_info_geo.txt"))
+mdata2 <- read_tsv(file.path(data_dir, "raw_data", "drosophila", "GSE98106_run_info_geo.txt"))
 
 
 #simplify mdata
@@ -222,7 +220,7 @@ compute_coverage <- function(bw, splice_windows_list){
   res 
 }
 
-bws <- dir("../data/bigwigs", full.names = TRUE, pattern = ".bw")
+bws <- dir(file.path(data_dir, "bigwigs", "drosophila"), full.names = TRUE, pattern = ".bw")
 sras <- str_match(bws, "SRR[0-9]+")[, 1] %>% 
   unique() 
 sras <- sras[sras %in% mdata$Run]
@@ -232,6 +230,7 @@ fwd_bws <- str_subset(bws, "fwd.bw")
 rev_bws <- str_subset(bws, "rev.bw")
 
 fwd_rev <- dplyr::filter(mdata, study == "rissland") %>% pull(Run)
+
 strand_first <- ifelse(sras %in% fwd_rev, "+", "-" )
 strand_second <- ifelse(!sras %in% fwd_rev, "+", "-" )
 
@@ -285,17 +284,16 @@ res <- res %>%
   tidyr::separate(id, c("study", "stage", "genotype"), sep = "_")
 
 new_facet_names <- c(
-  `1` = "3p-Splice-Site",
-  `2` = "5p-Splice-Site"
+  `1` = "5p-Splice-Site",
+  `2` = "3p-Splice-Site"
 )
 
 x_labels <- seq(-50, 50, by = 25)
 x_breaks <- seq(1, 101, by = 25)
 
 p <- ggplot(dplyr::filter(res, 
-                     study == "rissland",
-                     str_detect(stage, "embryo"),
-                     genotype == "w1118"),
+                          study == "rissland",
+                     str_detect(stage, "embryo")),
        aes(.win_id, prop_of_max)) + 
   geom_line(aes(colour = stage), size = 1) + 
   facet_grid(~type, labeller = as_labeller(new_facet_names)) +

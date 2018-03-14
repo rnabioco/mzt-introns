@@ -19,13 +19,50 @@ def _map_settings(wildcards):
   return map_settings
 
 
+def _fq_types(wildcards):
+  """ lookup global dictionary LIB_MAP via sample
+      and lookup fastq suffixes
+  """
+  id = os.path.basename(wildcards.sample)
+  if id in LIB_MAP:
+     lib_attrs = LIB_MAP[id]
+     fq_types = config[lib_attrs]["fq"]
+     
+     if len(fq_types) == 1:
+       suffixes = [""]
+     elif len(fq_types) > 1:
+       suffixes = ["_R1", "_R2"]
+     fq_names = [path.join(wildcards.data,
+                           "fastq",
+                           "trimmed",
+                           wildcards.species, 
+                           wildcards.expt, 
+                           wildcards.sample + x + "_trimmed.fastq.gz") for
+                           x in suffixes]
+  else:
+     sys.exit("no fastq suffixes found for library: {}".format(id))
+
+  return fq_names
+
+def _input_options(wildcards):
+  
+  fqs = _fq_types(wildcards)
+  if len(fqs) == 1:
+      io_option = " -r {fq[0]} ".format(fq = fqs)
+  elif len(fqs) > 1:
+      io_option = " -1 {fq[0]} -2 {fq[1]} ".format(fq = fqs)
+  else:
+      sys.exit("no fastq suffixes found for library: {}".format(id))
+  return io_option
+    
+    
 rule salmon_idx:
     """
     build salmon on pre-mRNA fasta
     Salmon v0.9.1
     """
     input:
-      fasta = path.join(DBASES, "{species}", "primary_transcripts.fa"),
+      fasta = path.join(DBASES, "{species}",  "primary_transcripts.fa"),
       gtf = path.join(DBASES, "{species}", "primary_transcripts.gtf")
     output:
       path.join(DBASES, "{species}", "salmon", "hash.bin")
@@ -43,41 +80,80 @@ rule salmon_idx:
         -p {threads} \
         -t {input.fasta} \
         --type "quasi" \
+        -k 21 \
         -i {params.outname}
       """
 
-rule salmon_primary:
+rule salmon_primary_single:
     """
     run salmon on pre-mRNA indexes
     Salmon v0.9.1
     """
     input:
       idx = path.join(DBASES, "{species}", "salmon", "hash.bin"),
-      R1 = "{data}/fastq/trimmed/{species}/{sample}_trimmed.fastq.gz",
+      R1 = _fq_types,
+      #R1 = "{data}/fastq/trimmed/{species}/{expt}/{sample}_trimmed.fastq.gz",
       gtf = path.join(DBASES, "{species}", "primary_transcripts.gtf")
     output:
-      path.join("{data}", "salmon", "{species}", "{sample}", "quant.sf")
+      path.join("{data}", "salmon", "{species}", "{expt}", "{sample}", "quant.sf")
     params:
+      io = _input_options,
       settings = _map_settings,
       idx = path.join(DBASES, "{species}", "salmon"),
-      out_dir = path.join("{data}", "salmon", "{species}", "{sample}"),
+      out_dir = path.join("{data}", "salmon", "{species}", "{expt}", "{sample}"),
       job_name = "salmon_fishin",
       memory = "select[mem>30] rusage[mem=30]",
     log:
-      path.join("{data}", "salmon", "logs", "{species}", "{sample}")
+      path.join("{data}", "salmon", "logs", "{species}", "{expt}", "{sample}")
     threads: 12
     resources: all_threads=12
     shell:
       """
       salmon quant \
         -i {params.idx} \
-        -r {input.R1} \
+        {params.io} \
         -o {params.out_dir} \
         -p {threads} \
         --numBootstraps 50 \
         {params.settings} \
         -g {input.gtf}
       """
+
+#rule salmon_primary_paired:
+#    """
+#    run salmon on pre-mRNA indexes
+#    Salmon v0.9.1
+#    """
+#    input:
+#      #R1 = "{data}/fastq/trimmed/{species}/{expt}/{sample}_R1_trimmed.fastq.gz",
+#      #R2 = "{data}/fastq/trimmed/{species}/{expt}/{sample}_R2_trimmed.fastq.gz",
+#      _fq_types,
+#      idx = path.join(DBASES, "{species}", "salmon", "hash.bin"),
+#      gtf = path.join(DBASES, "{species}", "primary_transcripts.gtf")
+#    output:
+#      path.join("{data}", "salmon", "{species}", "{expt}", "{sample}", "quant.sf")
+#    params:
+#      settings = _map_settings,
+#      idx = path.join(DBASES, "{species}", "salmon"),
+#      out_dir = path.join("{data}", "salmon", "{species}", "{expt}", "{sample}"),
+#      job_name = "salmon_fishin",
+#      memory = "select[mem>30] rusage[mem=30]",
+#    log:
+#      path.join("{data}", "salmon", "logs", "{species}", "{expt}", "{sample}")
+#    threads: 12
+#    resources: all_threads=12
+#    shell:
+#      """
+#      salmon quant \
+#        -i {params.idx} \
+#        -1 {input[0]} \
+#        -2 {input[1]} \
+#        -o {params.out_dir} \
+#        -p {threads} \
+#        --numBootstraps 50 \
+#        {params.settings} \
+#        -g {input.gtf}
+#      """
 
 rule primary_transcript_gtf:
     """
@@ -106,4 +182,3 @@ rule primary_transcript_gtf:
 
       gffread -w {output.fa} -g {params.genome} {output.gtf}
       """
-

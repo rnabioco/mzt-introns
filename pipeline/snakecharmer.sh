@@ -38,8 +38,8 @@ module load bowtie/0.12.9
 
 snakemake --drmaa "$args" \
     --snakefile Snakefile \
-    --jobs 24 \
-    --resources all_threads=24 \
+    --jobs 72 \
+    --resources all_threads=72 \
     --latency-wait 50 \
     --rerun-incomplete  \
     --configfile config.yaml 

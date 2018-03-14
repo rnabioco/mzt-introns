@@ -16,7 +16,6 @@ SPLICE_JUNCTS = config["SPLICE_JUNCTS"]
 # The following are all dictionaries that are accessed using functions in 
 # the snakemake rules
 
-LIB_MAP = config["LIB_MAP"]
 GENOMES = config["GENOMES"]
 TRANSCRIPTS = config["TRANSCRIPTS"]
 CHROM_SIZES = config["CHROM_SIZES"]
@@ -32,48 +31,52 @@ if SPLICE_JUNCTS:
   SPLICE_JUNCTS = glob(SPLICE_JUNCTS)
   SPLICE_JUNCTS = " ".join(SPLICE_JUNCTS)
 
-SPECIES, SAMPLES, = glob_wildcards(path.join(DATA, 
-                    "raw_data",
-                    "{species}",
-                    "{samples}.fastq.gz"))
+
+LIB_MAP = {}
+EXPTS = []
+SPECIES = []
+SAMPLES = []
+
+with open('lib_params.tsv', 'r') as f:
+    hdr = f.readline()
+    for line in f:
+        if line.startswith("#"): continue
+        fields = line.split()
+        LIB_MAP[fields[0]] = fields[1]
+        EXPTS.append(fields[1])
+        SPECIES.append(fields[2])
+        SAMPLES.append(fields[0])
 
 print("processing the following libraries")
 [print("library {} from species {} from experiment {}".format(x,
                                                               SPECIES[i],
                                                               LIB_MAP[x])) for i, x in enumerate(SAMPLES)]
 
-
 rule all:
   input:
-    expand(path.join(DATA, "salmon", "{species}", "{sample}", "quant.sf"),
-            zip, sample = SAMPLES, species = SPECIES),
+    expand(path.join(DATA, "salmon", "{species}", "{expt}", "{sample}", "quant.sf"),
+            zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
       
     #### star alignments ####
     expand(path.join(DATA, "star", "logs", "{species}_index_tracking.txt"),
             zip, species = SPECIES),
 
-    expand(path.join(DATA, "star", "{species}", "{sample}_sorted.bam"),
-            zip, sample = SAMPLES, species = SPECIES),
+    expand(path.join(DATA, "star", "{species}", "{expt}", "{sample}_sorted.bam"),
+            zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
     
-    expand(path.join(DATA, "star", "{species}", "{sample}_sorted.bam.bai"),
-            zip, sample = SAMPLES, species = SPECIES),
-
-    #### IRFinder ####
-    #path.join(DBASES, "irf_annotations",
-    #"logs", "complete.txt"),
-    #expand("{data}/irfinder/{sample}/IRFinder-IR-dir.txt",
-    #        data=DATA, sample = SAMPLE),
+    expand(path.join(DATA, "star", "{species}", "{expt}", "{sample}_sorted.bam.bai"),
+            zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
 
     #### bigwigs ####
-    #expand("{data}/bigwigs/{sample}_{orient}.bw",
-    #  data=DATA, sample = SAMPLE, orient = ["fwd", "rev", "rev_neg"]),
+    expand(path.join(DATA, "bigwigs", "{species}", "{expt}", "{sample}_{orient}.bw"),
+      zip, sample = SAMPLES, species = SPECIES, expt = EXPTS, orient = len(SAMPLES) * ["fwd", "rev", "rev_neg"]),
 
     ##### qc ####
-    expand(path.join(DATA, "qc", "fastqc", "{species}", "{sample}_fastqc/summary.txt"),
-      zip, sample = SAMPLES, species = SPECIES)
+    expand(path.join(DATA, "qc", "fastqc", "{species}", "{expt}", "{sample}_fastqc/summary.txt"),
+      zip, sample = SAMPLES, expt = EXPTS, species = SPECIES)
 
 include: "rules/qc.snake"    
 include: "rules/cutadapt.snake"
 include: "rules/primary_expression.snake"
 include: "rules/star.snake"
-#include: "rules/make_bigwigs.snake"
+include: "rules/make_bigwigs.snake"

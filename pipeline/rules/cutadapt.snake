@@ -1,7 +1,5 @@
 """ rules for trimming """ 
 
-raw = path.join("{data}", "raw_data")
-
 def _trim_settings(wildcards):
   """ lookup global dictionary LIB_MAP via sample
       wildcard and return settings for cutadapt 
@@ -18,11 +16,55 @@ def _trim_settings(wildcards):
 
   return trim_settings
 
-rule cutadapt:
+def _fq_types(wildcards):
+  """ lookup global dictionary LIB_MAP via sample
+      and lookup fastq suffixes
+  """
+  id = os.path.basename(wildcards.sample)
+  if id in LIB_MAP:
+     lib_attrs = LIB_MAP[id]
+     fq_types = config[lib_attrs]["fq"]
+     fq_names = [path.join(wildcards.data,
+                           "raw_data",
+                           wildcards.species, 
+                           wildcards.expt, 
+                           wildcards.sample + x) for x in fq_types]
+  else:
+     sys.exit("WARNING: no trimming settings found for library: {}".format(id))
+
+  return fq_names
+
+rule cutadapt_single:
   input:
-    path.join(raw, "{species}", "{sample}.fastq.gz"),
+    _fq_types, 
   output:
-    path.join("{data}", "fastq", "trimmed", "{species}", "{sample}_trimmed.fastq.gz") 
+    path.join("{data}", "fastq", "trimmed", "{species}", "{expt}", "{sample}_trimmed.fastq.gz") 
+  params:
+    settings = _trim_settings,
+    job_name = "trim.{sample}",
+    memory = "select[mem>4] rusage[mem=4]",
+  log:
+    path.join("{data}", "fastq", "trimmed", "logs", "{species}", "{expt}", "{sample}.txt") 
+  message:
+    " trimming illumina adapters" 
+  threads:
+    1
+  resources: all_threads=1
+  shell:
+    """
+    cutadapt \
+      -m 18 \
+      {params.settings} \
+      -o {output} \
+      {input[0]} 
+    """
+
+rule cutadapt_paired:
+  input:
+    _fq_types, 
+  output:
+    path.join("{data}", "fastq", "trimmed", "{species}", "{expt}", "{sample}_R1_trimmed.fastq.gz"), 
+    path.join("{data}", "fastq", "trimmed", "{species}", "{expt}", "{sample}_R2_trimmed.fastq.gz") 
   params:
     settings = _trim_settings,
     job_name = "trim.{sample}",
@@ -39,7 +81,9 @@ rule cutadapt:
     cutadapt \
       -m 18 \
       {params.settings} \
-      -o {output} \
-      {input} 
+      -o {output[0]} \
+      -p {output[1]} \
+      {input[0]}  \
+      {input[1]}
     """
 

@@ -4,7 +4,15 @@
   - develop methods for classifying transcripts into maternal or zygotic during the MZT 
   - use the presence of intronic read coverage to indicate `de-novo` transcription
   - apply first to well studied organisms (drosophila, zebrafish), then use as method for less well characterized systems, such as sea urchin. 
-  
+
+## 2018-03-14
+  - updated snakemake pipeline to handle paired end alignements
+  - began aligning data
+
+## 2018-03-13
+  - downloaded large scale zebrafish time course from ENA
+
+## Check intron coverage in xenopus and zebrafish 
 ## 2018-02-15 Make pipeline species agnostic 
   - reorganize pipeline to handle additional species
   - download zebrafish and xenopus datasets from GEO

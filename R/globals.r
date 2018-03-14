@@ -22,7 +22,7 @@ library(tibble)
 
 #### Paths ####
 
-project_dir <- path.expand("~/Projects/rissland")
+project_dir <- path.expand("~/Projects/mzt-introns")
 data_dir <- file.path(project_dir, "data")
 results_dir <- file.path(project_dir, "results")
 docs_dir <- file.path(project_dir, "docs")

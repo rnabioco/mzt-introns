@@ -9,11 +9,12 @@
 
 libs=$(grep "Danio rerio" sra_info.txt | cut -f 7)
 
+mkdir -p ../zebrafish/EICHHORN
 for fq in $libs
 do
     echo $fq
     fastq-dump  --gzip $fq 
-    mv $fq".fastq.gz" ../zebrafish/
+    mv $fq".fastq.gz" ../zebrafish/EICHHORN
 done
 
 libs=$(grep "Xenopus" sra_info.txt | cut -f 7)

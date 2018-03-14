@@ -38,42 +38,21 @@ GENOME_DIRS:
 SPLICE_JUNCTS:
   "../data/star/firstpass/*_SJ.out.tab"
 
-LIB_MAP:
-    SRR3710279: "EICHHORN"
-    SRR3710280: "EICHHORN"
-    SRR3710285: "EICHHORN"
-    SRR3710286: "EICHHORN"
-    SRR3710291: "EICHHORN"
-    SRR3710292: "EICHHORN"
-    SRR3710293: "EICHHORN"
-    SRR3710294: "EICHHORN"
-    SRR3710299: "EICHHORN"
-    SRR1039864: "EICHHORN"
-    SRR1039867: "EICHHORN"
-    SRR1039870: "EICHHORN"
-    SRR1039882: "EICHHORN"
-    SRR1039884: "EICHHORN"
-    SRR1146573: "EICHHORN"
-    SRR5469986: "RISSLAND"
-    SRR5469988: "RISSLAND"
-    SRR5469990: "RISSLAND"
-    SRR5469992: "RISSLAND"
-    SRR5469994: "RISSLAND"
-    SRR5469996: "RISSLAND"
-    SRR5469998: "RISSLAND"
-    SRR5470000: "RISSLAND"
-    SRR5470002: "RISSLAND"
-    SRR5470004: "RISSLAND"
-    SRR5470006: "RISSLAND"
-    SRR5470008: "RISSLAND"
-    SRR5970577: "RISSLAND"
-    SRR5970579: "RISSLAND"
-    SRR5970580: "RISSLAND"
-    
 EICHHORN:
-    trim: " -a 'TCGTATGCCGTCTTCTGCTT' -u 8 "
-    map: " --libType 'SF' "
+    trim: " -q 10 -a 'TCGTATGCCGTCTTCTGCTT' -u 8 "
+    map: " --fldMean 40 --fldSD 4 --libType 'SF' --seqBias --gcBias "
+    fq: 
+        - ".fastq.gz"
 
 RISSLAND:
-    trim: " -a 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC' "
-    map: " --libType 'SR' "
+    trim: " -q 10 -a 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC' "
+    map: " --fldMean 200 --fldSD 20 --libType 'SR' --seqBias --gcBias "
+    fq: 
+        - ".fastq.gz"
+
+WHITE:
+    trim: " "
+    map: " -l ISR "
+    fq: 
+        - "_1.fastq.gz"
+        - "_2.fastq.gz"
