@@ -1,0 +1,361 @@
+---
+title: "Zebrafish time course"
+author: "Kent Riemondy RBI"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+## Zebrafish MZT analysis
+
+A paper describing a very high resolution time course of zebrafish was published recently in eLife [A high-resolution mRNA expression time course of embryonic development in zebrafish](https://elifesciences.org/articles/30860). This dataset will likely provide additional proof of principle data for the intronic analysis performed with drosophila datasets. 
+
+RNA-Seq data (paired-end) from 8 stages surrounding the MZT (or ZGA in zebrafish literature) was downloaded with 5 replicates per time point. The data was processed through salmon similarly to the drosophila data. In contrast to Olivia's drosphila data, these data are poly(A) purified mRNA-Seq libraries, so the intronic signal may be more subtle.  
+
+ 
+## RNA-Seq Libraries
+```{r load_libs}
+source("../../R/globals.r")
+```
+
+
+
+```{r get_metadata}
+mdata <- read_tsv(file.path(data_dir, "raw_data", "zebrafish", 
+                             "WHITE", "elife-30860-supp1-v1.tsv"))
+
+fish_pond <- file.path(data_dir, 
+                           "salmon",
+                           "zebrafish",
+                           "WHITE")
+fishes <- dir(fish_pond,
+                 pattern = "quant.sf$",
+                 recursive = T,
+                 full.names = T)
+
+fish_names <- str_split(fishes, "\\/") %>% map_chr(., ~.x[10])
+
+mdata <- mdata %>% filter(public_name %in% fish_names)
+mdata
+```
+
+
+## Alignment %
+
+```{r alignment}
+
+alignment <- map(fish_names, 
+                  ~fromJSON(txt = file.path(
+                    fish_pond, 
+                          .x, 
+                          "aux_info", 
+                          "meta_info.json")) %>% .$percent_mapped)
+
+alignment <- data_frame(fish_names,
+                        percent_mapped = unlist(alignment))
+
+
+inner_join(alignment, 
+          mdata, 
+          by = c("fish_names" = "public_name"))
+```
+
+## Load in salmon data
+
+```{r load_dat, message = F}
+
+dat <- map(fishes, read_tsv)
+
+# name with libraryID
+names(dat) <- fish_names
+
+dat <- bind_rows(dat, .id = "public_name")
+
+#join with main data
+dat <- inner_join(dat, 
+                 mdata,
+                by = c("public_name"))
+```
+
+### transcript to gene mapping
+```{r drop_monoexonic}
+gtf <- "~/Projects/shared_dbases/annotation/zebrafish/GRCz10/Danio_rerio.GRCz10.91.gtf"
+gtf <- import(gtf)
+gtf <- as.data.frame(gtf)
+
+gtf_summary <- dplyr::filter(gtf, type == "exon") %>% 
+  dplyr::select(seqnames, start, end, strand, gene_id) %>% 
+  dplyr::rename(chrom = seqnames) %>% 
+  unique() %>% 
+  group_by(gene_id) %>% 
+  bed_merge() %>% 
+  dplyr::summarize(total_exons = n())
+
+monoexonic_genes <- dplyr::filter(gtf_summary, total_exons == 1) %>% pull(gene_id)
+```
+
+
+```{r remove_monoexonic}
+
+dat <- anti_join(dat, 
+                    data_frame(gene_id = monoexonic_genes),
+                 by = c("Name" = "gene_id"))
+
+# classify transcripts as primary or mature
+dat %>% 
+  mutate(type = ifelse(str_detect(Name, 
+                                  "^pre_"), 
+                       "pre", "mature")) -> dat
+
+# drop unneeded data
+dat <- dplyr::select(dat,
+                     -c(Length:EffectiveLength, 
+                        NumReads))
+
+gene2tx <- gtf[, c("gene_id", "transcript_id")]
+gene2tx <- unique(gene2tx)
+gene2tx <- na.omit(gene2tx)
+
+# add in geneid attribute
+dat <- left_join(dat, gene2tx, by = c("Name" = "transcript_id")) %>% 
+  dplyr::rename(transcript_id = Name)
+
+# add geneid attribute for pre_ annotations
+
+dat <- mutate(dat, 
+              gene_id = ifelse(type == "pre",
+                               str_replace(transcript_id, "^pre_", ""),
+                               gene_id))
+
+dat <- mutate(dat,
+              monoexonic = gene_id %in% monoexonic_genes)
+```
+
+### plot pre_mRNA ratio
+
+```{r, calc_premRNA}
+# sum primary and mature TPMs for each gene 
+summary_dat <- dplyr::select(dat, TPM, gene_id, 
+              public_name, type, stageName, sampleName) %>% 
+  group_by(gene_id, public_name, type) %>% 
+  dplyr::summarize(total_tpm = sum(TPM, na.rm = F),
+                   sampleName = unique(sampleName),
+                   stageName = unique(stageName)) %>% 
+  ungroup() 
+
+## calc primary ratio
+tpm_summary <- summary_dat %>% 
+  spread(type, total_tpm) %>% 
+  mutate(primary_ratio  = pre / (mature + pre))
+
+## calc mean primary ratio
+tpm_means <- tpm_summary %>% 
+  group_by(gene_id, 
+           stageName) %>% 
+  summarize(mean_primary = mean(primary_ratio,
+                                na.rm = T)) 
+
+tpm_means <- mutate(tpm_means, 
+                       stage = factor(stageName, 
+                                         levels = c(
+                                           "1-cell",
+                                           "2-cell",
+                                           "128-cell",
+                                           "1k-cell",
+                                           "Dome",
+                                           "50pc-epiboly",
+                                           "Shield",
+                                           "75pc-epiboly")
+                                         )
+                       )
+
+
+tpm_means <- dplyr::ungroup(tpm_means)
+
+plt <- ggplot(tpm_means, 
+       aes(stage, mean_primary)) +
+  geom_boxplot(aes(fill = stage), coef = 1e3) + 
+  labs(x = "",
+       y = expression(frac("pre-mRNA TPM", 
+                           "mature + pre-mRNA TPM"))) +
+  scale_fill_brewer(palette = "Set1",
+                    name = "Transcript Type",
+                    breaks = c("pre", "mature"),
+                    labels = c("pre-mRNA", "mature-mRNA")) +
+  theme(
+    axis.text.x = element_text(angle = 90,
+                               vjust = 0.5,
+                               hjust = 0.5)
+  )
+
+plt
+```
+
+There is a very clear increase between the 1k-cell and Dome stages, which are pre and post-MZT stages (3hpf and 4.3hpf respectively).
+
+
+## Classify transcripts into maternal or zygotic
+
+Next I'll try to classify transcripts into catagories based upon their abundance changes throughout embryogenesis. 
+
+First generate salmon quant.sf files for pre-mRNAs or mature mRNAs independently for loading into `tximport`
+```{r, split_salmon}
+
+tx2gene_mapping <- dplyr::select(dat, 
+                         transcript_id, 
+                         gene_id) %>% 
+  unique() %>% 
+  as.data.frame()
+
+all_dat <- map(fishes, read_tsv)
+
+all_pre <- map(all_dat, 
+                 ~dplyr::filter(.x,
+                                str_detect(Name, "^pre_")))
+
+all_mat <- map(all_dat, 
+               ~dplyr::filter(.x,
+                              !str_detect(Name, "^pre_")))
+
+dir.create("salmon_modified", recursive = T)
+
+walk2(all_pre,
+      fish_names,
+      ~write_tsv(.x, file.path("salmon_modified", 
+                               paste0(.y, ".premRNA"))))
+walk2(all_mat,
+      fish_names,
+      ~write_tsv(.x, file.path("salmon_modified", 
+                               paste0(.y, ".maturemRNA"))))
+```
+
+
+```{r}
+files <- dir("salmon_modified", full.names = T)
+
+mature <- str_subset(files, "maturemRNA$")
+pre <- str_subset(files, "premRNA$")
+
+matures <- tximport(mature, 
+         type = "salmon",
+         tx2gene = tx2gene_mapping)
+
+pres <- tximport(pre, 
+         type = "salmon",
+         tx2gene = tx2gene_mapping)
+
+# make metadata sample ordered by columns in count matrix
+pdata <- inner_join(data_frame(public_name = fish_names),
+           mdata, by = "public_name")
+
+pdata <- mutate(pdata, 
+                mzt = ifelse(str_detect(stageName,
+                                        "-cell"),
+                             "zygotic",
+                             "maternal"))
+```
+
+
+```{r deseq2}
+
+dds <- DESeqDataSetFromTximport(matures, pdata, ~mzt)
+dds_mature <- DESeq(dds)
+res_mature <- results(dds_mature)
+res_mature_tidy <- results(dds_mature, tidy = TRUE)
+
+dds <- DESeqDataSetFromTximport(pres, pdata, ~mzt)
+dds_pre <- DESeq(dds)
+res_pre <- results(dds_pre)
+res_pre_tidy <- results(dds_pre, tidy = TRUE)
+```
+
+```{r plot_MAs}
+pre_plot_dat <- res_pre_tidy %>% 
+  as_tibble() %>% 
+  mutate(sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.05 & log2FoldChange < 0, "Down", "Not Sig")))
+n_sig_up <- nrow(dplyr::filter(pre_plot_dat, sig == "Up")) %>% 
+  formatC(big.mark = ",")
+n_sig_down <- nrow(dplyr::filter(pre_plot_dat, sig == "Down"))  %>% 
+  formatC(big.mark = ",")
+n_notsig <- nrow(dplyr::filter(pre_plot_dat, sig == "Not Sig"))  %>% 
+  formatC(big.mark = ",")
+
+p <- ggplot(pre_plot_dat, 
+       aes(baseMean, log2FoldChange)) +
+  geom_point(aes(colour = sig), size = 0.1) +
+  scale_colour_viridis(discrete = TRUE,
+                       name = "",
+                       labels = c(paste0("Sig down (n = ", n_sig_down, ")"),
+                                  paste0("Not Sig (n= ", n_notsig, ")"),
+                                  paste0("Sig up (n = ", n_sig_up, ")"))) +
+  scale_x_log10() + 
+  labs(x = expression(paste("log"[10], " Average Expression")),
+       y = expression(paste("log"[2], " ", frac("Zygotic", "Maternal"))),
+       title = "pre-mRNA") +
+  guides(colour = guide_legend(override.aes = list(size = 3))) +
+  theme(legend.position = "top")
+  
+p
+
+mature_plot_dat <- res_mature_tidy %>% 
+  as_tibble() %>% 
+  mutate(sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.05 & log2FoldChange < 0, "Down", "Not Sig")))
+n_sig_up <- nrow(dplyr::filter(mature_plot_dat, sig == "Up")) %>% 
+  formatC(big.mark = ",")
+n_sig_down <- nrow(dplyr::filter(mature_plot_dat, sig == "Down"))  %>% 
+  formatC(big.mark = ",")
+n_notsig <- nrow(dplyr::filter(mature_plot_dat, sig == "Not Sig"))  %>% 
+  formatC(big.mark = ",")
+
+p <- ggplot(mature_plot_dat, 
+       aes(baseMean, log2FoldChange)) +
+  geom_point(aes(colour = sig), size = 0.1) +
+  scale_colour_viridis(discrete = TRUE,
+                       name = "",
+                       labels = c(paste0("Sig down (n = ", n_sig_down, ")"),
+                                  paste0("Not Sig (n= ", n_notsig, ")"),
+                                  paste0("Sig up (n = ", n_sig_up, ")"))) +
+  scale_x_log10() + 
+  labs(x = expression(paste("log"[10], " Average Expression")),
+       y = expression(paste("log"[2], " ", frac("Zygotic", "Maternal"))),
+       title = "mature-mRNA") +
+  guides(colour = guide_legend(override.aes = list(size = 3))) +
+  theme(legend.position = "top")
+  
+p
+```
+
+
+```{r plot_zyg_mat_pre}
+library(eulerr)
+
+sig_mat_up <- res_mature_tidy %>% filter(padj < 0.05, log2FoldChange > 0)
+sig_pre_up <- res_pre_tidy %>% filter(padj < 0.05, log2FoldChange > 0)
+all_sig_up <- union(sig_mat_up$row, sig_pre_up$row)
+lgl_up_df <- data.frame(
+  `mature_mRNA` =  all_sig_up %in% sig_mat_up$row,
+  `pre_mRNA` =  all_sig_up %in% sig_pre_up$row
+)
+
+sig_mat_down <- res_mature_tidy %>% filter(padj < 0.05, log2FoldChange < 0)
+sig_pre_down <- res_pre_tidy %>% filter(padj < 0.05, log2FoldChange < 0)
+all_sig_down <- union(sig_mat_down$row, sig_pre_down$row)
+lgl_down_df <- data.frame(
+  `mature_mRNA` =  all_sig_down %in% sig_mat_down$row,
+  `pre_mRNA` =  all_sig_down %in% sig_pre_down$row
+)
+
+fit_up <- euler(lgl_up_df)
+fit_down <- euler(lgl_down_df)
+
+plot(fit_up, fill = viridis(2), quantities = TRUE, main = "Increased abundance in Zygotic Stages")
+plot(fit_down, fill = viridis(2), quantities = TRUE, main = "Decreased abundance in Zygotic Stages")
+```

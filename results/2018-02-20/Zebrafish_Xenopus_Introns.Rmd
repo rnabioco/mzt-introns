@@ -1,0 +1,575 @@
+---
+title: "Read distribution surrounding introns"
+author: "Kent Riemondy RBI"
+date: "12/14/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(valr)
+library(tidyverse)
+library(rtracklayer)
+library(doParallel)
+source("../../R/globals.r")
+```
+
+
+## Examine read distribution surrounding intron-exon junctions
+  
+```{r bw_io_function}
+
+read_bigwig <- function(path, set_strand = "+") {
+  import(path) %>% 
+    as_tibble() %>% 
+    mutate(chrom = as.character(seqnames),
+           strand = set_strand) %>% 
+    dplyr::select(chrom, start, end, score, strand)
+}
+  
+```
+
+
+### generate intron positions drosophila
+
+```{r intron_pos}
+
+generate_splice_regions <- function(genome_file, gtf_file){
+  genome <- read_tsv(genome_file, 
+                     col_types = c("ci---"), 
+                     col_names = c("chrom", "size"))
+  
+  gtf <- read_tsv(gtf_file,
+                  comment = "#", col_names = F, 
+                  col_types = "ccciicccc")
+  names(gtf) <- c("chrom",
+                  "source",
+                  "feature",
+                  "start",
+                  "end",
+                  "none",
+                  "strand",
+                  "frame",
+                  "attributes")
+  
+  gene_ids <- gtf$attributes %>% 
+    str_split(";") %>% 
+    map(., ~str_subset(.x, "gene_id")) %>% 
+    unlist() 
+  
+  gtf$gene_ids <- gene_ids
+  
+  # convert to bed, keep gene_id and score
+  bed <- gtf %>% 
+    filter(feature == "exon") %>% 
+    mutate(start = start - 1,
+           gene_id = str_match(gene_ids, 
+                               'gene_id \\\"([^\\\\]+)\\\"') %>%
+             .[, 2],
+           score = str_match(attributes, 'exon_number \\\"([^\"]+)\\\";') %>% 
+             .[, 2],
+           score = as.numeric(score)) %>%  
+    dplyr::select(chrom, start, end, gene_id, score, strand)
+    
+  # generate introns
+  intron_bed <- bed %>% 
+    group_by(gene_id) %>% 
+    arrange(start, .by_group = T) %>% 
+    mutate(.start = end, 
+           .end = lead(start),
+          start = .start, 
+          end = .end) %>% 
+     dplyr::select(-.start, -.end) %>% 
+     dplyr::filter(!is.na(start),
+           !is.na(end),
+           start < end)
+  
+  # add intron number as score by strand
+  intron_bed <- intron_bed %>% 
+    mutate(score = ifelse(strand == "-",
+                          rev(row_number()), 
+                          row_number())) %>% 
+    ungroup()
+  
+  
+  # drop last intron and calc position in strand specific manner
+  ss_3p <- intron_bed %>% 
+    group_by(gene_id) %>%
+    arrange(score, .by_group = TRUE) %>% 
+    dplyr::slice(1:(n() - 1)) %>% 
+    ungroup() %>% 
+    mutate(start = ifelse(strand == "-", 
+                          start,
+                          end - 1),
+           end = ifelse(strand == "-",
+                        start + 1, 
+                        end))
+  
+  # drop first intron
+  ss_5p <- intron_bed %>% 
+    group_by(gene_id) %>%
+    arrange(score, .by_group = TRUE) %>% 
+    dplyr::slice(2:n()) %>% 
+    ungroup() %>% 
+    mutate(start = ifelse(strand == "-", 
+                          end - 1,
+                          start),
+           end = ifelse(strand == "-",
+                        end, 
+                        start + 1))
+  
+  splice_pos <- list(ss_5p, ss_3p)
+  
+  # make intervals +/- 50bp 
+  splice_slop <- map(splice_pos, 
+                       ~bed_slop(.x, genome, both = 50))
+    
+  # single nucleotide coverage
+  splice_windows_plus <- map(splice_slop,
+                          ~dplyr::filter(.x, strand == "+") %>%  
+                            bed_makewindows(win_size = 1))
+   
+  splice_windows_minus <- map(splice_slop,
+                          ~dplyr::filter(.x, strand == "-") %>%  
+                            bed_makewindows(win_size = 1,
+                                           reverse = TRUE))
+  
+  splice_windows <- map2(splice_windows_plus, 
+                         splice_windows_minus,
+                         ~bind_rows(.x, .y))
+  splice_windows
+}
+
+splice_windows <- generate_splice_regions("~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai",                   "~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf")
+```
+
+## generate coverage summaries
+
+```{r mdata}
+mdata1 <- read_tsv(file.path(data_dir, "raw_data", "drosophila", "GSE83616_run_info_geo.txt"))
+mdata2 <- read_tsv(file.path(data_dir, "raw_data", "drosophila", "GSE98106_run_info_geo.txt"))
+
+
+#simplify mdata
+mdata1 <- dplyr::select(mdata1,
+                       Run_s, 
+                       developmental_stage_s,
+                       genotype_s,
+                       source_name_s,
+                       Assay_Type_s)
+
+#simplify mdata
+mdata2 <- dplyr::select(mdata2,
+                       Run_s, 
+                       developmental_stage_s,
+                       rip_antibody_s,
+                       source_name_s,
+                       strain_s)
+
+# select relevant libs
+mdata2 <- dplyr::filter(mdata2,
+                     source_name_s == "Embryo",
+                     strain_s %in% c("w1118", "eGFP-ME31B"),
+                     rip_antibody_s == "none") %>% 
+  dplyr::select(-rip_antibody_s)
+
+mdata1 <- dplyr::filter(mdata1,
+                     genotype_s == "wt",
+                     Assay_Type_s == "RNA-Seq") %>% 
+  dplyr::select(-Assay_Type_s) %>% 
+  dplyr::rename(strain_s = genotype_s)
+
+
+mdata <- list(mdata1, mdata2)
+names(mdata) <- c("eichhorn", "rissland")
+
+mdata <- bind_rows(mdata, .id = "study")
+#cleanup names
+mdata <- mdata %>% 
+  mutate(source_name_s = ifelse(source_name_s == "embryos", 
+                                "Embryo",
+                                source_name_s),
+         developmental_stage_s = str_replace(developmental_stage_s,
+                                             " h ",
+                                             " hr "))
+
+# cleanup colnames
+colnames(mdata) <- str_replace(colnames(mdata),
+                               "_s$",
+                               "")
+
+mdata
+```
+
+
+```{r dropsophila_windows}
+
+compute_coverage <- function(bw, splice_windows_list){
+
+  splice_windows <- map(splice_windows_list, ~group_by(.x, strand))
+  bw <- group_by(bw, strand)
+  
+  splice_coverage <- map(splice_windows,
+                         ~bed_map(.x,
+                                  bw, 
+                                  total_coverage = sum(score, na.rm = T)))
+  
+  splice_summary <- map(splice_coverage, 
+                        ~group_by(.x, .win_id) %>% 
+                          summarize(total_signal = sum(total_coverage, 
+                                                       na.rm = T)))
+  
+  res <- bind_rows(splice_summary, .id = "type")
+  res 
+}
+
+bws <- dir(file.path(data_dir, "bigwigs", "drosophila"), full.names = TRUE, pattern = ".bw")
+sras <- str_match(bws, "SRR[0-9]+")[, 1] %>% 
+  unique() 
+sras <- sras[sras %in% mdata$Run]
+bws <- bws[str_match(bws, "SRR[0-9]+")[, 1] %in% sras]
+
+fwd_bws <- str_subset(bws, "fwd.bw")
+rev_bws <- str_subset(bws, "rev.bw")
+
+fwd_rev <- dplyr::filter(mdata, study == "rissland") %>% pull(Run)
+
+strand_first <- ifelse(sras %in% fwd_rev, "+", "-" )
+strand_second <- ifelse(!sras %in% fwd_rev, "+", "-" )
+
+bw_info <- pmap(list(fwd_bws, 
+                     rev_bws,
+                     strand_first,
+                     strand_second), function(a,b,c,d) c(a, b, c, d))
+
+intron_metagene <- function(list_of_bws, splice_windows) {
+  #list_of_bws <- list(bw_pos, bw_neg)
+  #splice_windows <- list of bed_intervals for 5p and 3p splice site
+  bw_fwd <- read_bigwig(list_of_bws[[1]], list_of_bws[[3]])
+  bw_rev <- read_bigwig(list_of_bws[[2]], list_of_bws[[4]])
+  
+  bw_combined <- bind_rows(bw_fwd, bw_rev)
+  res <- compute_coverage(bw_combined, splice_windows)
+  res
+}
+
+n <- 6
+registerDoParallel(n)
+ris = foreach(i = bw_info,
+              .packages = c("valr", "tidyverse", "rtracklayer"),
+              .export = c("intron_metagene", 
+                          "read_bigwig",
+                          "splice_windows"))  %dopar% {
+  intron_metagene(i, splice_windows)
+              }
+
+```
+
+## Plot coverage
+```{r plot}
+
+ris <- ris[sras %in% mdata$Run]
+sras <- sras[sras %in% mdata$Run]
+
+# scale everything to 1
+
+plot_ids <- semi_join(mdata,
+          data_frame(Run = sras), 
+          by = "Run") %>% 
+  mutate(id = paste(study, developmental_stage, strain, sep = "_")) %>% 
+  pull(id)
+
+names(ris) <- plot_ids
+res <- bind_rows(ris, .id = "id")
+res <- res %>% 
+  group_by(id) %>% 
+  mutate(prop_of_max = total_signal / max(total_signal)) %>% 
+  tidyr::separate(id, c("study", "stage", "genotype"), sep = "_")
+
+new_facet_names <- c(
+  `1` = "5p-Splice-Site",
+  `2` = "3p-Splice-Site"
+)
+
+x_labels <- seq(-50, 50, by = 25)
+x_breaks <- seq(1, 101, by = 25)
+
+
+plts <- map(unique(res$genotype),
+   ~ggplot(dplyr::filter(res, genotype == .x),
+       aes(.win_id, prop_of_max)) + 
+    geom_line(aes(colour = stage), size = 1) + 
+    facet_grid(~type, labeller = as_labeller(new_facet_names)) +
+    scale_colour_viridis(discrete = TRUE,
+                       name = "") + 
+    scale_x_continuous(labels = x_labels, breaks = x_breaks) +
+    labs(y = "Proportion of maximum signal",
+         x = "Nucleotides from the splice site"))
+  
+names(plts) <- unique(res$genotype)
+
+imap(plts, ~save_plot(paste0("intron_metagene_", .y, ".pdf"), 
+                      .x, base_width = 6.5))
+
+```
+
+## Zebrafish
+
+```{r zebrafish}
+
+splice_windows <- generate_splice_regions("~/Projects/shared_dbases/genomes/zebrafish/GRCz10/Danio_rerio.GRCz10.dna.toplevel.fa.fai",  
+                                          "~/Projects/shared_dbases/annotation/zebrafish/GRCz10/Danio_rerio.GRCz10.91.gtf")
+
+
+# downsample to 10%
+set.seed(42)
+ids <- sample(unique(splice_windows[[1]]$gene_id), length(unique(splice_windows[[1]]$gene_id)) * 0.1)
+
+splice_windows_small <- map(splice_windows, ~semi_join(.x, data_frame(gene_id = ids), by = "gene_id"))
+
+bws <- dir(file.path(data_dir, "bigwigs", "zebrafish"), full.names = TRUE, pattern = ".bw")
+
+fwd_bws <- str_subset(bws, "fwd.bw")
+rev_bws <- str_subset(bws, "rev.bw")
+
+strand_first <- ifelse(str_detect(fwd_bws, "fwd.bw"), "-", "+" )
+strand_second <- ifelse(str_detect(rev_bws, "rev.bw"), "+", "-" )
+
+bw_info <- pmap(list(fwd_bws, 
+                     rev_bws,
+                     strand_first,
+                     strand_second), function(a,b,c,d) c(a, b, c, d))
+
+n <- 3
+registerDoParallel(n)
+ris = foreach(i = bw_info,
+              .packages = c("valr", "tidyverse", "rtracklayer"),
+              .export = c("intron_metagene", 
+                          "read_bigwig",
+                          "splice_windows_small"))  %dopar% {
+  intron_metagene(i, splice_windows_small)
+                          }
+
+
+mdata <- read_tsv(file.path(data_dir, "raw_data", "xenopus", "sra_info.txt"))
+file_ids <- basename(fwd_bws) %>% str_replace(., "_fwd.bw", "")
+
+plot_ids <- semi_join(mdata,
+          data_frame(Run = file_ids), 
+          by = "Run") %>% 
+  pull(developmental_stage)
+
+names(ris) <- plot_ids
+res <- bind_rows(ris, .id = "id")
+res <- res %>% 
+  group_by(id) %>% 
+  mutate(prop_of_max = total_signal / max(total_signal)) 
+
+new_facet_names <- c(
+  `1` = "5p-Splice-Site",
+  `2` = "3p-Splice-Site"
+)
+
+x_labels <- seq(-50, 50, by = 25)
+x_breaks <- seq(1, 101, by = 25)
+
+
+p <- ggplot(res,
+       aes(.win_id, prop_of_max)) + 
+    geom_line(aes(colour = id), size = 1) + 
+    facet_grid(~type, labeller = as_labeller(new_facet_names)) +
+    scale_colour_viridis(discrete = TRUE,
+                       name = "") + 
+    scale_x_continuous(labels = x_labels, breaks = x_breaks) +
+    labs(y = "Proportion of maximum signal",
+         x = "Nucleotides from the splice site")
+
+p
+
+save_plot("intron_metagene_zebrafish.pdf", 
+                      p, base_width = 6.5)
+```
+
+
+## Xenopus
+
+```{r xenopus}
+
+genome_file <- "~/Projects/shared_dbases/genomes/xenopus/jgi_xenla9.2/XL9_2.fa.fai"
+gtf_file <- "~/Projects/shared_dbases/annotation/xenopus/jgi_xenla9.2/XENLA_9.2_Xenbase.gtf"
+
+genome <- read_tsv(genome_file, 
+                     col_types = c("ci---"), 
+                     col_names = c("chrom", "size"))
+  
+  gtf <- read_tsv(gtf_file,
+                  comment = "#", col_names = F, 
+                  col_types = "ccciicccc")
+  names(gtf) <- c("chrom",
+                  "source",
+                  "feature",
+                  "start",
+                  "end",
+                  "none",
+                  "strand",
+                  "frame",
+                  "attributes")
+  
+  gene_ids <- gtf$attributes %>% 
+    str_split(";") %>% 
+    map(., ~str_subset(.x, "transcript_id")) %>% 
+    unlist() 
+  
+  gtf$gene_ids <- gene_ids
+  
+  # convert to bed, keep gene_id and score
+  bed <- gtf %>% 
+    filter(feature == "exon") %>% 
+    mutate(start = start - 1,
+           gene_id = str_match(gene_ids, 
+                               'transcript_id \\\"([^\\\\]+)\\\"') %>%
+             .[, 2],
+           score = str_match(attributes, 'exon_number \\\"([^\"]+)\\\";') %>% 
+             .[, 2],
+           score = as.numeric(score)) %>%  
+    dplyr::select(chrom, start, end, gene_id, score, strand)
+    
+  bed <- dplyr::select(bed, 
+                       chrom, start, end, strand) %>% 
+    unique() %>% 
+    mutate(gene_id = row_number()) %>% 
+    select(chrom, start, end, gene_id, strand)
+  
+  # generate introns
+  intron_bed <- bed %>% 
+    group_by(gene_id) %>% 
+    arrange(start, .by_group = T) %>% 
+    mutate(.start = end, 
+           .end = lead(start),
+          start = .start, 
+          end = .end) %>% 
+     dplyr::select(-.start, -.end) %>% 
+     dplyr::filter(!is.na(start),
+           !is.na(end),
+           start < end) 
+  
+  # add intron number as score by strand
+  intron_bed <- intron_bed %>% 
+    mutate(score = ifelse(strand == "-",
+                          rev(row_number()), 
+                          row_number())) %>% 
+    ungroup()
+  
+  
+  # drop last intron and calc position in strand specific manner
+  ss_3p <- intron_bed %>% 
+    group_by(gene_id) %>%
+    arrange(score, .by_group = TRUE) %>% 
+    dplyr::slice(1:(n() - 1)) %>% 
+    ungroup() %>% 
+    mutate(start = ifelse(strand == "-", 
+                          start,
+                          end - 1),
+           end = ifelse(strand == "-",
+                        start + 1, 
+                        end))
+  
+  # drop first intron
+  ss_5p <- intron_bed %>% 
+    group_by(gene_id) %>%
+    arrange(score, .by_group = TRUE) %>% 
+    dplyr::slice(2:n()) %>% 
+    ungroup() %>% 
+    mutate(start = ifelse(strand == "-", 
+                          end - 1,
+                          start),
+           end = ifelse(strand == "-",
+                        end, 
+                        start + 1))
+  
+  splice_pos <- list(ss_5p, ss_3p)
+  
+  # make intervals +/- 50bp 
+  splice_slop <- map(splice_pos, 
+                       ~bed_slop(.x, genome, both = 50))
+    
+  # downsample to 10%
+  set.seed(42)
+  ids <- sample(unique(splice_slop[[1]]$gene_id), length(unique(splice_slop[[1]]$gene_id)) * 0.1)
+
+  splice_slop <- map(splice_slop, ~semi_join(.x, data_frame(gene_id = ids), by = "gene_id"))
+
+  # single nucleotide coverage
+  splice_windows_plus <- map(splice_slop,
+                          ~dplyr::filter(.x, strand == "+") %>%  
+                            bed_makewindows(win_size = 1))
+   
+  splice_windows_minus <- map(splice_slop,
+                          ~dplyr::filter(.x, strand == "-") %>%  
+                            bed_makewindows(win_size = 1,
+                                           reverse = TRUE))
+  
+  splice_windows <- map2(splice_windows_plus, 
+                         splice_windows_minus,
+                         ~bind_rows(.x, .y))
+
+bws <- dir(file.path(data_dir, "bigwigs", "xenopus"), full.names = TRUE, pattern = "fwd.bw|rev.bw")
+
+fwd_bws <- str_subset(bws, "fwd.bw")
+rev_bws <- str_subset(bws, "rev.bw")
+
+strand_first <- ifelse(str_detect(fwd_bws, "fwd.bw"), "-", "+" )
+strand_second <- ifelse(str_detect(rev_bws, "rev.bw"), "+", "-" )
+
+bw_info <- pmap(list(fwd_bws, 
+                     rev_bws,
+                     strand_first,
+                     strand_second), function(a,b,c,d) c(a, b, c, d))
+
+n <- 3
+registerDoParallel(n)
+ris = foreach(i = bw_info,
+              .packages = c("valr", "tidyverse", "rtracklayer"),
+              .export = c("intron_metagene", 
+                          "read_bigwig",
+                          "splice_windows"))  %dopar% {
+  intron_metagene(i, splice_windows)
+                          }
+
+
+mdata <- read_tsv(file.path(data_dir, "raw_data", "xenopus", "sra_info.txt"))
+file_ids <- basename(fwd_bws) %>% str_replace(., "_fwd.bw", "")
+
+plot_ids <- semi_join(mdata,
+          data_frame(Run = file_ids), 
+          by = "Run") %>% 
+  pull(developmental_stage)
+
+names(ris) <- plot_ids
+res <- bind_rows(ris, .id = "id")
+res <- res %>% 
+  group_by(id) %>% 
+  mutate(prop_of_max = total_signal / max(total_signal)) 
+
+new_facet_names <- c(
+  `1` = "5p-Splice-Site",
+  `2` = "3p-Splice-Site"
+)
+
+x_labels <- seq(-50, 50, by = 25)
+x_breaks <- seq(1, 101, by = 25)
+
+
+p <- ggplot(res,
+       aes(.win_id, prop_of_max)) + 
+    geom_line(aes(colour = id), size = 1) + 
+    facet_grid(~type, labeller = as_labeller(new_facet_names)) +
+    scale_colour_viridis(discrete = TRUE,
+                       name = "") + 
+    scale_x_continuous(labels = x_labels, breaks = x_breaks) +
+    labs(y = "Proportion of maximum signal",
+         x = "Nucleotides from the splice site")
+  
+save_plot("intron_metagene_xenopus.pdf", 
+                      p, base_width = 6.5)
+```
