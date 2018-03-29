@@ -12,7 +12,7 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_chunk$set(cache = TRUE)
+knitr::opts_chunk$set(cache = FALSE)
 knitr::opts_chunk$set(message = FALSE)
 knitr::opts_chunk$set(warning = FALSE)
 ```
@@ -41,8 +41,8 @@ source("../../R/globals.r")
 
 
 ```{r get_metadata}
-mdata1 <- read_tsv(file.path(data_dir, "raw_data", "drosophila", "GSE83616_run_info_geo.txt"))
-mdata2 <- read_tsv(file.path(data_dir, "raw_data", "drosophila", "GSE98106_run_info_geo.txt"))
+mdata1 <- read_tsv(file.path(data_dir, "raw_data", "drosophila", "EICHHORN", "GSE83616_run_info_geo.txt"))
+mdata2 <- read_tsv(file.path(data_dir, "raw_data", "drosophila", "RISSLAND", "GSE98106_run_info_geo.txt"))
 
 #simplify mdata
 mdata1 <- dplyr::select(mdata1,
@@ -75,7 +75,7 @@ mdata1 <- dplyr::filter(mdata1,
 
 
 mdata <- list(mdata1, mdata2)
-names(mdata) <- c("eichhorn", "rissland")
+names(mdata) <- c("EICHHORN", "RISSLAND")
 
 mdata <- bind_rows(mdata, .id = "study")
 #cleanup names
@@ -100,9 +100,12 @@ mdata
 
 ```{r alignment}
 
-alignment <- map(mdata$Run, 
-                  ~fromJSON(txt = file.path(data_dir, 
+alignment <- map2(mdata$Run, 
+                 mdata$study,
+                  ~fromJSON(txt = file.path(data_dir,
                           "salmon", 
+                          "drosophila",
+                          .y,
                           .x, 
                           "aux_info", 
                           "meta_info.json")) %>% .$percent_mapped)
@@ -119,7 +122,7 @@ inner_join(alignment,
 ## Load in salmon data
 
 ```{r load_dat, message = F}
-files <- dir(file.path(data_dir, "salmon"),
+files <- dir(file.path(data_dir, "salmon", "drosophila"),
             recursive = T,
             pattern = "*quant.sf",
             full.names = T)
@@ -129,7 +132,7 @@ dat <- map(files, read_tsv)
 # name with libraryID
 names(dat) <- dirname(files) %>% 
   str_split(., "[/]", simplify = T) %>% 
-  .[, 8]
+  .[, 10]
 
 dat <- bind_rows(dat, .id = "libraryID")
 
@@ -293,7 +296,7 @@ files <- dir(file.path(data_dir, "salmon"),
 
 sra_ids <- dirname(files) %>% 
   str_split(., "/", simplify = T) %>% 
-  .[, 8]
+  .[, 10]
 
 keep <- sra_ids %in% mdata$Run
 files <- files[keep]
@@ -453,7 +456,9 @@ plot(fit_down, fill = viridis(2), quantities = TRUE, main = "Decreased abundance
 
 What are the transcripts that have increased intronic epression, but no increases in mature?
 
-```{r hmap_intronic_only, fig.height = 10, fig.width = 8}
+### Genes with pre-mRNA increases and no increases in mature 
+
+```{r hmap_intronic_only, fig.height = 14, fig.width = 8}
 interest_txs <- sig_pre_up[!sig_pre_up$row %in% sig_mat_up$row, ]
 
 dds_pre_rlogs <- rlog(dds_pre)
@@ -476,11 +481,12 @@ cols <- pdata %>%
 rlog_counts_mat <- assay(dds_mat_rlogs)
 colnames(rlog_counts_mat) <- cols
 
-sig_pre_rlogs <- rlog_counts_pre[rownames(rlog_counts_pre) %in% interest_txs$row &
-                                 rownames(rlog_counts_pre) %in% rownames(rlog_counts_mat), ]
-sig_mat_rlogs <- rlog_counts_mat[rownames(rlog_counts_mat) %in% interest_txs$row &
-                                 rownames(rlog_counts_mat) %in% rownames(rlog_counts_pre), ]
-
+common_genes <- intersect(rownames(rlog_counts_pre),rownames(rlog_counts_mat))
+rlog_counts_pre <- rlog_counts_pre[common_genes, ]
+rlog_counts_mat <- rlog_counts_mat[common_genes, ]
+ 
+sig_pre_rlogs <- rlog_counts_pre[rownames(rlog_counts_pre) %in% interest_txs$row, ]
+sig_mat_rlogs <- rlog_counts_mat[rownames(rlog_counts_mat) %in% interest_txs$row, ]
 
 ht1 <- Heatmap(sig_pre_rlogs, 
          name = "pre-mRNA abundance\nrlog",
@@ -490,9 +496,61 @@ ht1 <- Heatmap(sig_pre_rlogs,
 ht2 <- Heatmap(sig_mat_rlogs, 
          name = "mature-mRNA abundance\nrlog",
          show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         column_order = column_order(ht1))
+
+draw(ht1 + ht2, column_title = "Increased pre-mRNA \nnot Increased mature")
+```
+
+
+### Genes with pre-mRNA increases and no change in mature (up or down)
+
+```{r, fig.height = 14, fig.width = 8}
+
+notsig_mat <- res_mature_tidy %>% filter(padj >= 0.05 | is.na(padj))
+interest_txs_nosig_mature <- sig_pre_up[sig_pre_up$row %in% notsig_mat$row, ]
+
+sig_pre_rlogs <- rlog_counts_pre[rownames(rlog_counts_pre) %in% interest_txs_nosig_mature$row, ]
+sig_mat_rlogs <- rlog_counts_mat[rownames(rlog_counts_mat) %in% interest_txs_nosig_mature$row, ]
+
+ht1 <- Heatmap(sig_pre_rlogs, 
+         name = "pre-mRNA abundance\nrlog",
+         show_row_names = F,
          show_row_dend = F)
 
-print(ht1 + ht2)
+ht2 <- Heatmap(sig_mat_rlogs, 
+         name = "mature-mRNA abundance\nrlog",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         column_order = column_order(ht1))
+
+draw(ht1 + ht2, column_title = "Increased pre-mRNA \nnot significant mature")
+```
+
+### Genes with pre-mRNA increases and decreases in mature 
+```{r, fig.height = 14, fig.width = 8}
+## not sig in mature (neither up or down)
+interest_txs_down_mature <- sig_pre_up[sig_pre_up$row %in% sig_mat_down$row, ]
+
+sig_pre_rlogs <- rlog_counts_pre[rownames(rlog_counts_pre) %in% interest_txs_down_mature$row, ]
+sig_mat_rlogs <- rlog_counts_mat[rownames(rlog_counts_mat) %in% interest_txs_down_mature$row, ]
+
+ht1 <- Heatmap(sig_pre_rlogs, 
+         name = "pre-mRNA abundance\nrlog",
+         show_row_names = F,
+         show_row_dend = F)
+
+ht2 <- Heatmap(sig_mat_rlogs, 
+         name = "mature-mRNA abundance\nrlog",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         column_order = column_order(ht1))
+
+draw(ht1 + ht2, column_title = "Increased pre-mRNA \n Decreased mature")
+
 ```
 
 
@@ -555,29 +613,46 @@ The interesting transcripts that have increased intronic expression but do not h
 
 gene2name <- dplyr::select(gtf, gene_id, gene_name) %>% unique()
 
-res_mature_tidy_simple <- dplyr::select(res_mature_tidy, 
-                                        row:log2FoldChange, padj)
-interesting_txs <- left_join(interest_txs, 
+res_mature_tidy_simple <- left_join(res_mature_tidy, 
                              gene2name, 
                              by = c("row" = "gene_id")) %>% 
-  dplyr::select(gene_name, row:log2FoldChange, padj) %>% 
-  arrange(padj) %>% 
-  left_join(res_mature_tidy_simple, 
-            by = "row",
-            suffix = c("_pre-mRNA", "_mature-mRNA")) %>% 
-  dplyr::rename(gene_id = row)
+  dplyr::select(gene_name, gene_id = row, baseMean:log2FoldChange, padj)
 
-all_txs <- left_join(res_pre_tidy, 
+res_pre_tidy_simple <- left_join(res_pre_tidy, 
                              gene2name, 
                              by = c("row" = "gene_id")) %>% 
-  dplyr::select(gene_name, row:log2FoldChange, padj) %>% 
-  arrange(padj) %>% 
-  left_join(res_mature_tidy_simple, 
-            by = "row",
-            suffix = c("_pre-mRNA", "_mature-mRNA")) %>% 
-  dplyr::rename(gene_id = row)
+  dplyr::select(gene_name, gene_id = row, baseMean:log2FoldChange, padj)
+
+all_gene_measurements <- full_join(res_pre_tidy_simple, res_mature_tidy_simple,
+                                   by = c("gene_id", "gene_name"), 
+                                   suffix = c("_pre-mRNA", "_mature-mRNA"))
+
+uppre_not_upmat <- all_gene_measurements %>% 
+  filter(gene_id %in% interest_txs$row) %>% 
+  arrange(`padj_pre-mRNA`) 
+
+uppre_notsig_mat <- uppre_not_upmat %>% 
+  filter(`padj_mature-mRNA` >= 0.05 | is.na(`padj_mature-mRNA`)) %>% 
+  arrange(`padj_pre-mRNA`) 
+
+uppre_sig_downmat <- uppre_not_upmat %>% 
+  filter(`padj_mature-mRNA` < 0.05, `log2FoldChange_mature-mRNA` < 0) %>% 
+  arrange(`padj_pre-mRNA`) 
 
 today <- Sys.Date()
-write_tsv(interesting_txs, paste0("upregulated_intronic_", today, ".tsv"))
-write_tsv(all_txs, paste0("all_genes_", today, ".tsv"))
+
+readme <- c(
+  "filename\tdescription",
+  "upregulated_intronic_not_upregulated_mature\tgenes with increased premRNA (padj < 0.05) and not significantly increased mature (padj >= 0.05 for log2foldchange > 0 or log2foldchange < 0 and any padj value)",
+  "upregulated_intronic_not_changed_mature\tgenes with increased premRNA (padj < 0.05) and not significant mature (padj >= 0.05)",
+  "upregulated_intronic_downregulated_mature\tgenes with increased premRNA (padj < 0.05) and decreased mature (padj < 0.05 and log2foldchange < 0)",
+  "all_genes\tmeasurements for all genes"
+)
+
+write_lines(readme, "README.txt")
+
+write_tsv(uppre_not_upmat, paste0("upregulated_intronic_not_upregulated_mature_", today, ".tsv"))
+write_tsv(uppre_notsig_mat, paste0("upregulated_intronic_not_changed_mature_", today, ".tsv"))
+write_tsv(uppre_sig_downmat, paste0("upregulated_intronic_downregulated_mature_", today, ".tsv"))
+write_tsv(all_gene_measurements, paste0("all_genes_", today, ".tsv"))
 ```
