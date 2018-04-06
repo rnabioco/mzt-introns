@@ -16,21 +16,26 @@ GENOMES:
     drosophila: "/vol3/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
     xenopus:  "/vol3/home/riemondy/Projects/shared_dbases/genomes/xenopus/jgi_xenla9.2/XL9_2.fa"
     zebrafish:  "/vol3/home/riemondy/Projects/shared_dbases/genomes/zebrafish/GRCz10/Danio_rerio.GRCz10.dna.toplevel.fa"
+    seaurchin:  "/vol3/home/riemondy/Projects/mzt-introns/dbases/seaurchin/GCF_000002235.4_Spur_4.2_genomic.fa"
 
 TRANSCRIPTS:
     drosophila: "/vol3/home/riemondy/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
     xenopus: "/vol3/home/riemondy/Projects/shared_dbases/annotation/xenopus/jgi_xenla9.2/XENLA_9.2_Xenbase.gtf"
     zebrafish: "/vol3/home/riemondy/Projects/shared_dbases/annotation/zebrafish/GRCz10/Danio_rerio.GRCz10.91.gtf"
+    seaurchin:  "/vol3/home/riemondy/Projects/mzt-introns/dbases/seaurchin/GCF_000002235.4_Spur_4.2_genomic.gtf"
 
 CHROM_SIZES:
     drosophila: "/vol3/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
     xenopus:  "/vol3/home/riemondy/Projects/shared_dbases/genomes/xenopus/jgi_xenla9.2/XL9_2.fa.fai"
     zebrafish:  "/vol3/home/riemondy/Projects/shared_dbases/genomes/zebrafish/GRCz10/Danio_rerio.GRCz10.dna.toplevel.fa.fai"
+    seaurchin:  "/vol3/home/riemondy/Projects/mzt-introns/dbases/seaurchin/GCF_000002235.4_Spur_4.2_genomic.fa.fai"
 
 GENOME_DIRS:
     drosophila: "/vol3/home/riemondy/Projects/shared_dbases/star/drosophila/BDGP6"
     xenopus: "/vol3/home/riemondy/Projects/shared_dbases/star/xenopus/jgi_xenla9.2"
     zebrafish: "/vol3/home/riemondy/Projects/shared_dbases/star/zebrafish/GRCz10"
+    seaurchin: "/vol3/home/riemondy/Projects/shared_dbases/star/seaurchin/Spur_4.2"
+
 
 
 # path to STAR SJ.out.tab file
@@ -56,3 +61,11 @@ WHITE:
     fq: 
         - "_1.fastq.gz"
         - "_2.fastq.gz"
+
+TU:
+    trim: " "
+    map: " -l IU "
+    fq:
+        - "_1.fastq.gz"
+        - "_2.fastq.gz"
+

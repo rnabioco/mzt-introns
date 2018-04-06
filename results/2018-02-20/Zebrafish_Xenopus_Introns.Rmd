@@ -7,6 +7,10 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = FALSE)
+```
+
+```{r libs}
 library(valr)
 library(tidyverse)
 library(rtracklayer)
@@ -140,14 +144,15 @@ generate_splice_regions <- function(genome_file, gtf_file){
   splice_windows
 }
 
-splice_windows <- generate_splice_regions("~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai",                   "~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf")
+splice_windows <- generate_splice_regions("~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai",
+                                          "~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf")
 ```
 
 ## generate coverage summaries
 
 ```{r mdata}
-mdata1 <- read_tsv(file.path(data_dir, "raw_data", "drosophila", "GSE83616_run_info_geo.txt"))
-mdata2 <- read_tsv(file.path(data_dir, "raw_data", "drosophila", "GSE98106_run_info_geo.txt"))
+mdata1 <- read_tsv(file.path(data_dir, "raw_data", "drosophila", "EICHHORN", "GSE83616_run_info_geo.txt"))
+mdata2 <- read_tsv(file.path(data_dir, "raw_data", "drosophila", "RISSLAND", "GSE98106_run_info_geo.txt"))
 
 
 #simplify mdata
@@ -223,7 +228,7 @@ compute_coverage <- function(bw, splice_windows_list){
   res 
 }
 
-bws <- dir(file.path(data_dir, "bigwigs", "drosophila"), full.names = TRUE, pattern = ".bw")
+bws <- dir(file.path(data_dir, "bigwigs", "drosophila"), full.names = TRUE, pattern = ".bw", recursive = T)
 sras <- str_match(bws, "SRR[0-9]+")[, 1] %>% 
   unique() 
 sras <- sras[sras %in% mdata$Run]
@@ -253,9 +258,9 @@ intron_metagene <- function(list_of_bws, splice_windows) {
   res
 }
 
-n <- 6
+n <- 3
 registerDoParallel(n)
-ris = foreach(i = bw_info,
+ris <- foreach(i = bw_info,
               .packages = c("valr", "tidyverse", "rtracklayer"),
               .export = c("intron_metagene", 
                           "read_bigwig",
@@ -273,8 +278,8 @@ sras <- sras[sras %in% mdata$Run]
 
 # scale everything to 1
 
-plot_ids <- semi_join(mdata,
-          data_frame(Run = sras), 
+plot_ids <- left_join(data_frame(Run = sras), 
+                      mdata,
           by = "Run") %>% 
   mutate(id = paste(study, developmental_stage, strain, sep = "_")) %>% 
   pull(id)
@@ -294,11 +299,10 @@ new_facet_names <- c(
 x_labels <- seq(-50, 50, by = 25)
 x_breaks <- seq(1, 101, by = 25)
 
-
 plts <- map(unique(res$genotype),
    ~ggplot(dplyr::filter(res, genotype == .x),
        aes(.win_id, prop_of_max)) + 
-    geom_line(aes(colour = stage), size = 1) + 
+    geom_line(aes(colour = stage), size = 0.75, alpha = 0.75) + 
     facet_grid(~type, labeller = as_labeller(new_facet_names)) +
     scale_colour_viridis(discrete = TRUE,
                        name = "") + 
@@ -311,6 +315,7 @@ names(plts) <- unique(res$genotype)
 imap(plts, ~save_plot(paste0("intron_metagene_", .y, ".pdf"), 
                       .x, base_width = 6.5))
 
+write_tsv(res, "drosophila_zf_plotting_dat.tsv")
 ```
 
 ## Zebrafish
@@ -322,12 +327,12 @@ splice_windows <- generate_splice_regions("~/Projects/shared_dbases/genomes/zebr
 
 
 # downsample to 10%
-set.seed(42)
-ids <- sample(unique(splice_windows[[1]]$gene_id), length(unique(splice_windows[[1]]$gene_id)) * 0.1)
+#set.seed(42)
+#ids <- sample(unique(splice_windows[[1]]$gene_id), length(unique(splice_windows[[1]]$gene_id)) * 0.1)
 
-splice_windows_small <- map(splice_windows, ~semi_join(.x, data_frame(gene_id = ids), by = "gene_id"))
+#splice_windows_small <- map(splice_windows, ~semi_join(.x, data_frame(gene_id = ids), by = "gene_id"))
 
-bws <- dir(file.path(data_dir, "bigwigs", "zebrafish"), full.names = TRUE, pattern = ".bw")
+bws <- dir(file.path(data_dir, "bigwigs", "zebrafish", "EICHHORN"), full.names = TRUE, pattern = ".bw", recursive = T)
 
 fwd_bws <- str_subset(bws, "fwd.bw")
 rev_bws <- str_subset(bws, "rev.bw")
@@ -342,21 +347,21 @@ bw_info <- pmap(list(fwd_bws,
 
 n <- 3
 registerDoParallel(n)
-ris = foreach(i = bw_info,
+ris <- foreach(i = bw_info,
               .packages = c("valr", "tidyverse", "rtracklayer"),
               .export = c("intron_metagene", 
                           "read_bigwig",
-                          "splice_windows_small"))  %dopar% {
-  intron_metagene(i, splice_windows_small)
+                          "splice_windows"))  %dopar% {
+  intron_metagene(i, splice_windows)
                           }
 
 
-mdata <- read_tsv(file.path(data_dir, "raw_data", "xenopus", "sra_info.txt"))
+mdata <- read_tsv(file.path(data_dir, "raw_data", "xenopus", "EICHHORN","sra_info.txt"))
 file_ids <- basename(fwd_bws) %>% str_replace(., "_fwd.bw", "")
 
-plot_ids <- semi_join(mdata,
-          data_frame(Run = file_ids), 
-          by = "Run") %>% 
+plot_ids <- left_join(data_frame(Run = file_ids),
+                      mdata,
+                      by = "Run") %>% 
   pull(developmental_stage)
 
 names(ris) <- plot_ids
@@ -388,6 +393,76 @@ p
 
 save_plot("intron_metagene_zebrafish.pdf", 
                       p, base_width = 6.5)
+
+write_tsv(res, "eichhorn_zf_plotting_dat.tsv")
+```
+
+## Zebrafish (eLife paper)
+
+```{r zebrafish_elif, fig.width = 6.5}
+
+bws <- dir(file.path(data_dir, "bigwigs", "zebrafish", "WHITE"), full.names = TRUE, pattern = ".bw")
+
+fwd_bws <- str_subset(bws, "fwd.bw")
+rev_bws <- str_subset(bws, "rev.bw")
+
+strand_first <- ifelse(str_detect(fwd_bws, "fwd.bw"), "+", "-" )
+strand_second <- ifelse(str_detect(rev_bws, "rev.bw"), "-", "+" )
+
+bw_info <- pmap(list(fwd_bws, 
+                     rev_bws,
+                     strand_first,
+                     strand_second), function(a,b,c,d) c(a, b, c, d))
+
+n <- 3
+registerDoParallel(n)
+ris <- foreach(i = bw_info,
+              .packages = c("valr", "tidyverse", "rtracklayer"),
+              .export = c("intron_metagene", 
+                          "read_bigwig",
+                          "splice_windows"))  %dopar% {
+  intron_metagene(i, splice_windows)
+                          }
+
+
+mdata <- read_tsv(file.path(data_dir, "raw_data", "zebrafish", "WHITE", "elife-30860-supp1-v1.tsv"))
+file_ids <- basename(fwd_bws) %>% str_replace(., "_fwd.bw", "")
+
+plot_ids <- left_join(data_frame(public_name = file_ids), 
+                      mdata,
+          by = "public_name") %>% 
+  pull(stageName)
+
+names(ris) <- plot_ids
+res <- bind_rows(ris, .id = "id")
+
+res <- res %>% 
+  group_by(id) %>% 
+  mutate(prop_of_max = total_signal / max(total_signal)) 
+
+new_facet_names <- c(
+  `1` = "5p-Splice-Site",
+  `2` = "3p-Splice-Site"
+)
+
+x_labels <- seq(-50, 50, by = 25)
+x_breaks <- seq(1, 101, by = 25)
+
+p <- ggplot(res,
+       aes(.win_id, prop_of_max)) + 
+    geom_line(aes(colour = id), size = 0.75, alpha = 0.75) + 
+    facet_grid(~type, labeller = as_labeller(new_facet_names)) +
+    scale_colour_viridis(discrete = TRUE,
+                       name = "", option =  "D") + 
+    scale_x_continuous(labels = x_labels, breaks = x_breaks) +
+    labs(y = "Proportion of maximum signal",
+         x = "Nucleotides from the splice site")
+
+p
+
+write_tsv(res, "elife_plotting_dat.tsv")
+save_plot("intron_metagene_zebrafish_elife.pdf", 
+                      p, base_width = 6.5, base_height = 8)
 ```
 
 
@@ -572,4 +647,6 @@ p <- ggplot(res,
   
 save_plot("intron_metagene_xenopus.pdf", 
                       p, base_width = 6.5)
+
+write_tsv(res, "xenopus_plotting_dat.tsv")
 ```

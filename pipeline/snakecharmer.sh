@@ -5,6 +5,7 @@
 #BSUB -e logs/snakemake_%J.err
 #BSUB -R "select[mem>4] rusage[mem=4] " 
 #BSUB -q normal
+#BSUB -m "compute16"
 
 set -o nounset -o pipefail -o errexit -x
 
@@ -42,4 +43,4 @@ snakemake --drmaa "$args" \
     --resources all_threads=72 \
     --latency-wait 50 \
     --rerun-incomplete  \
-    --configfile config.yaml 
+    --configfile config.yaml  

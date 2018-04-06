@@ -84,7 +84,7 @@ rule salmon_idx:
         -i {params.outname}
       """
 
-rule salmon_primary_single:
+rule salmon_primary:
     """
     run salmon on pre-mRNA indexes
     Salmon v0.9.1
@@ -118,43 +118,6 @@ rule salmon_primary_single:
         {params.settings} \
         -g {input.gtf}
       """
-
-#rule salmon_primary_paired:
-#    """
-#    run salmon on pre-mRNA indexes
-#    Salmon v0.9.1
-#    """
-#    input:
-#      #R1 = "{data}/fastq/trimmed/{species}/{expt}/{sample}_R1_trimmed.fastq.gz",
-#      #R2 = "{data}/fastq/trimmed/{species}/{expt}/{sample}_R2_trimmed.fastq.gz",
-#      _fq_types,
-#      idx = path.join(DBASES, "{species}", "salmon", "hash.bin"),
-#      gtf = path.join(DBASES, "{species}", "primary_transcripts.gtf")
-#    output:
-#      path.join("{data}", "salmon", "{species}", "{expt}", "{sample}", "quant.sf")
-#    params:
-#      settings = _map_settings,
-#      idx = path.join(DBASES, "{species}", "salmon"),
-#      out_dir = path.join("{data}", "salmon", "{species}", "{expt}", "{sample}"),
-#      job_name = "salmon_fishin",
-#      memory = "select[mem>30] rusage[mem=30]",
-#    log:
-#      path.join("{data}", "salmon", "logs", "{species}", "{expt}", "{sample}")
-#    threads: 12
-#    resources: all_threads=12
-#    shell:
-#      """
-#      salmon quant \
-#        -i {params.idx} \
-#        -1 {input[0]} \
-#        -2 {input[1]} \
-#        -o {params.out_dir} \
-#        -p {threads} \
-#        --numBootstraps 50 \
-#        {params.settings} \
-#        -g {input.gtf}
-#      """
-
 rule primary_transcript_gtf:
     """
     Append primary transcript records to GTF annotations

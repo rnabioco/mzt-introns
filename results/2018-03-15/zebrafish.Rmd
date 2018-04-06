@@ -257,8 +257,8 @@ pdata <- inner_join(data_frame(public_name = fish_names),
 pdata <- mutate(pdata, 
                 mzt = ifelse(str_detect(stageName,
                                         "-cell"),
-                             "zygotic",
-                             "maternal"))
+                             "maternal",
+                             "zygotic"))
 ```
 
 
@@ -358,4 +358,101 @@ fit_down <- euler(lgl_down_df)
 
 plot(fit_up, fill = viridis(2), quantities = TRUE, main = "Increased abundance in Zygotic Stages")
 plot(fit_down, fill = viridis(2), quantities = TRUE, main = "Decreased abundance in Zygotic Stages")
+```
+
+
+```{r write_out_sig}
+write_tsv(res_pre_tidy, "deseq_results_pre.tsv")
+write_tsv(res_mature_tidy, "deseq_results_mature.tsv")
+
+```
+
+
+```{r hmap_intronic_only, fig.height = 14, fig.width = 8}
+interest_txs <- sig_pre_up[!sig_pre_up$row %in% sig_mat_up$row, ]
+
+dds_pre_rlogs <- rlog(dds_pre)
+
+# add in colnames
+cols <- pdata %>% 
+  pull(sampleName)
+
+rlog_counts_pre <- assay(dds_pre_rlogs)
+colnames(rlog_counts_pre) <- cols
+
+dds_mat_rlogs <- rlog(dds_mature)
+
+# add in colnames
+cols <- pdata %>% 
+  pull(sampleName)
+
+rlog_counts_mat <- assay(dds_mat_rlogs)
+colnames(rlog_counts_mat) <- cols
+
+common_genes <- intersect(rownames(rlog_counts_pre),rownames(rlog_counts_mat))
+rlog_counts_pre <- rlog_counts_pre[common_genes, ]
+rlog_counts_mat <- rlog_counts_mat[common_genes, ]
+ 
+sig_pre_rlogs <- rlog_counts_pre[rownames(rlog_counts_pre) %in% interest_txs$row, ]
+sig_mat_rlogs <- rlog_counts_mat[rownames(rlog_counts_mat) %in% interest_txs$row, ]
+
+ht1 <- Heatmap(sig_pre_rlogs, 
+         name = "pre-mRNA abundance\nrlog",
+         show_row_names = F,
+         show_row_dend = F)
+
+ht2 <- Heatmap(sig_mat_rlogs, 
+         name = "mature-mRNA abundance\nrlog",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         column_order = column_order(ht1))
+
+draw(ht1 + ht2, column_title = "Increased pre-mRNA \nnot Increased mature")
+```
+
+
+```{r increased_pre_mRNA, fig.height = 14, fig.width = 8}
+res_pre_tidy
+sig_pre_rlogs <- rlog_counts_pre[rownames(rlog_counts_pre) %in% sig_pre_up$row, ]
+sig_mat_rlogs <- rlog_counts_mat[rownames(rlog_counts_mat) %in% sig_mat_up$row, ]
+
+ht1 <- Heatmap(sig_pre_rlogs, 
+         name = "pre-mRNA abundance\nrlog",
+         show_row_names = F,
+         show_row_dend = F)
+ht1
+ht2 <- Heatmap(sig_mat_rlogs, 
+         name = "mature-mRNA abundance\nrlog",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         column_order = column_order(ht1))
+ht2
+```
+
+Try to order by time to induction...
+
+Examine two time point delta intron delta exon
+
+
+```{r delta_intron}
+mat_norm_counts <- counts(dds_mature, normalized = T)
+pre_norm_counts <- counts(dds_pre, normalized = T)
+
+common_genes <- intersect(rownames(mat_norm_counts), rownames(pre_norm_counts))
+mat_norm_counts <- mat_norm_counts[common_genes, ] + pre_norm_counts[common_genes, ]
+pre_norm_counts <- pre_norm_counts[common_genes, ]
+
+mat_norm_log <- log2(mat_norm_counts + 1)
+pre_norm_log <- log2(pre_norm_counts + 1)
+
+plot_fun <- function(x, y, sig) {
+  dat <- data_frame(x, y, label = sig)
+  ggplot(dat, aes(x, y)) +
+    geom_point(aes(color = label)) +
+    coord_equal()
+}
+map(1:ncol(delta_mature), ~plot_fun(delta_pre[, .x], delta_mature[, .x], rownames(delta_pre) %in% sig_mat_up$row))
+
 ```

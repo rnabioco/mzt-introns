@@ -58,22 +58,22 @@ rule all:
             zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
       
     #### star alignments ####
-    expand(path.join(DATA, "star", "logs", "{species}_index_tracking.txt"),
-            zip, species = SPECIES),
+    #expand(path.join(DATA, "star", "logs", "{species}_index_tracking.txt"),
+    #        zip, species = SPECIES),
 
-    expand(path.join(DATA, "star", "{species}", "{expt}", "{sample}_sorted.bam"),
-            zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
+    #expand(path.join(DATA, "star", "{species}", "{expt}", "{sample}_sorted.bam"),
+    #        zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
     
-    expand(path.join(DATA, "star", "{species}", "{expt}", "{sample}_sorted.bam.bai"),
-            zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
+    #expand(path.join(DATA, "star", "{species}", "{expt}", "{sample}_sorted.bam.bai"),
+    #        zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
 
     #### bigwigs ####
     expand(path.join(DATA, "bigwigs", "{species}", "{expt}", "{sample}_{orient}.bw"),
       zip, sample = SAMPLES, species = SPECIES, expt = EXPTS, orient = len(SAMPLES) * ["fwd", "rev", "rev_neg"]),
 
     ##### qc ####
-    expand(path.join(DATA, "qc", "fastqc", "{species}", "{expt}", "{sample}_fastqc/summary.txt"),
-      zip, sample = SAMPLES, expt = EXPTS, species = SPECIES)
+    #expand(path.join(DATA, "qc", "fastqc", "{species}", "{expt}", "{sample}_fastqc/summary.txt"),
+    #  zip, sample = SAMPLES, expt = EXPTS, species = SPECIES)
 
 include: "rules/qc.snake"    
 include: "rules/cutadapt.snake"
