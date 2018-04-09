@@ -1,5 +1,5 @@
 ---
-title: "Zebrafish time course"
+title: "Sea Urchin time course"
 author: "Kent Riemondy RBI"
 date: '`r Sys.Date()`'
 output: 
@@ -17,11 +17,7 @@ knitr::opts_chunk$set(message = FALSE)
 knitr::opts_chunk$set(warning = FALSE)
 ```
 
-## Zebrafish MZT analysis
-
-A paper describing a very high resolution time course of zebrafish was published recently in eLife [A high-resolution mRNA expression time course of embryonic development in zebrafish](https://elifesciences.org/articles/30860). This dataset will likely provide additional proof of principle data for the intronic analysis performed with drosophila datasets. 
-
-RNA-Seq data (paired-end) from 8 stages surrounding the MZT (or ZGA in zebrafish literature) was downloaded with 5 replicates per time point. The data was processed through salmon similarly to the drosophila data. In contrast to Olivia's drosphila data, these data are poly(A) purified mRNA-Seq libraries, so the intronic signal may be more subtle.  
+## Sea Urchin MZT analysis
 
  
 ## RNA-Seq Libraries
@@ -32,13 +28,19 @@ source("../../R/globals.r")
 
 
 ```{r get_metadata}
-mdata <- read_tsv(file.path(data_dir, "raw_data", "zebrafish", 
-                             "WHITE", "elife-30860-supp1-v1.tsv"))
+mdata1 <- read_csv(file.path(data_dir, "raw_data", "seaurchin", 
+                             "TU", "sraresult.csv"))
 
+mdata2 <- read_tsv(file.path(data_dir, "raw_data", "seaurchin", 
+                             "TU", "PRJNA81157.txt"))
+
+mdata <- left_join(mdata2, mdata1, 
+                   by = c("experiment_accession" = "Experiment Accession"))
+                   
 fish_pond <- file.path(data_dir, 
                            "salmon",
-                           "zebrafish",
-                           "WHITE")
+                           "seaurchin",
+                           "TU")
 fishes <- dir(fish_pond,
                  pattern = "quant.sf$",
                  recursive = T,
@@ -46,7 +48,7 @@ fishes <- dir(fish_pond,
 
 fish_names <- str_split(fishes, "\\/") %>% map_chr(., ~.x[10])
 
-mdata <- mdata %>% filter(public_name %in% fish_names)
+mdata <- mdata %>% filter(run_accession %in% fish_names)
 mdata
 ```
 
@@ -68,7 +70,7 @@ alignment <- data_frame(fish_names,
 
 inner_join(alignment, 
           mdata, 
-          by = c("fish_names" = "public_name"))
+          by = c("fish_names" = "run_accession"))
 ```
 
 ## Load in salmon data
@@ -80,17 +82,17 @@ dat <- map(fishes, read_tsv)
 # name with libraryID
 names(dat) <- fish_names
 
-dat <- bind_rows(dat, .id = "public_name")
+dat <- bind_rows(dat, .id = "run_accession")
 
 #join with main data
 dat <- inner_join(dat, 
                  mdata,
-                by = c("public_name"))
+                by = c("run_accession"))
 ```
 
 ### transcript to gene mapping
 ```{r drop_monoexonic}
-gtf <- "~/Projects/shared_dbases/annotation/zebrafish/GRCz10/Danio_rerio.GRCz10.91.gtf"
+gtf <- file.path(db_dir, "seaurchin", "GCF_000002235.4_Spur_4.2_genomic.gtf")
 gtf <- import(gtf)
 gtf <- as.data.frame(gtf)
 
@@ -140,6 +142,11 @@ dat <- mutate(dat,
 
 dat <- mutate(dat,
               monoexonic = gene_id %in% monoexonic_genes)
+
+dat <- separate(dat,
+                `Experiment Title`, 
+                into = c("organism", "misc", "stageName", "libtype"), 
+                sep = ";")
 ```
 
 ### plot pre_mRNA ratio
@@ -147,10 +154,9 @@ dat <- mutate(dat,
 ```{r, calc_premRNA}
 # sum primary and mature TPMs for each gene 
 summary_dat <- dplyr::select(dat, TPM, gene_id, 
-              public_name, type, stageName, sampleName) %>% 
-  group_by(gene_id, public_name, type) %>% 
+              run_accession, type, stageName) %>% 
+  group_by(gene_id, run_accession, type) %>% 
   dplyr::summarize(total_tpm = sum(TPM, na.rm = F),
-                   sampleName = unique(sampleName),
                    stageName = unique(stageName)) %>% 
   ungroup() 
 
@@ -166,26 +172,11 @@ tpm_means <- tpm_summary %>%
   summarize(mean_primary = mean(primary_ratio,
                                 na.rm = T)) 
 
-tpm_means <- mutate(tpm_means, 
-                       stage = factor(stageName, 
-                                         levels = c(
-                                           "1-cell",
-                                           "2-cell",
-                                           "128-cell",
-                                           "1k-cell",
-                                           "Dome",
-                                           "50pc-epiboly",
-                                           "Shield",
-                                           "75pc-epiboly")
-                                         )
-                       )
-
-
 tpm_means <- dplyr::ungroup(tpm_means)
 
 plt <- ggplot(tpm_means, 
-       aes(stage, mean_primary)) +
-  geom_boxplot(aes(fill = stage), coef = 1e3) + 
+       aes(stageName, mean_primary)) +
+  geom_boxplot(aes(fill = stageName), coef = 1e3) + 
   labs(x = "",
        y = expression(frac("pre-mRNA TPM", 
                            "mature + pre-mRNA TPM"))) +
@@ -202,7 +193,7 @@ plt <- ggplot(tpm_means,
 plt
 ```
 
-There is a very clear increase between the 1k-cell and Dome stages, which are pre and post-MZT stages (3hpf and 4.3hpf respectively).
+
 
 
 ## Classify transcripts into maternal or zygotic
@@ -256,15 +247,18 @@ pres <- tximport(pre,
          tx2gene = tx2gene_mapping)
 
 # make metadata sample ordered by columns in count matrix
-pdata <- inner_join(data_frame(public_name = fish_names),
-           mdata, by = "public_name")
+pdata <- inner_join(data_frame(run_accession = fish_names),
+           mdata, by = "run_accession")
 
-pdata <- mutate(pdata, 
-                mzt = ifelse(str_detect(stageName,
-                                        "-cell"),
+pdata <- separate(pdata,
+                `Experiment Title`, 
+                into = c("organism", "misc", "stageName", "libtype"), 
+                sep = ";")
+
+pdata <- mutate(pdata,
+                mzt = ifelse(stageName %in% c(" embryo 10hpf", " embryo 0hpf"),
                              "maternal",
-                             "zygotic"),
-                stageName = str_replace(stageName, "-", "_"))
+                             "zygotic"))
 ```
 
 
@@ -374,202 +368,20 @@ write_tsv(res_mature_tidy, "deseq_results_mature.tsv")
 ```
 
 
-```{r hmap_intronic_only, fig.height = 14, fig.width = 8}
-interest_txs <- sig_pre_up[!sig_pre_up$row %in% sig_mat_up$row, ]
-
-dds_pre_rlogs <- rlog(dds_pre)
-
-# add in colnames
-cols <- pdata %>% 
-  pull(sampleName)
-
-rlog_counts_pre <- assay(dds_pre_rlogs)
-colnames(rlog_counts_pre) <- cols
-
-dds_mat_rlogs <- rlog(dds_mature)
-
-# add in colnames
-cols <- pdata %>% 
-  pull(sampleName)
-
-rlog_counts_mat <- assay(dds_mat_rlogs)
-colnames(rlog_counts_mat) <- cols
-
-common_genes <- intersect(rownames(rlog_counts_pre),rownames(rlog_counts_mat))
-rlog_counts_pre <- rlog_counts_pre[common_genes, ]
-rlog_counts_mat <- rlog_counts_mat[common_genes, ]
- 
-sig_pre_rlogs <- rlog_counts_pre[rownames(rlog_counts_pre) %in% interest_txs$row, ]
-sig_mat_rlogs <- rlog_counts_mat[rownames(rlog_counts_mat) %in% interest_txs$row, ]
-
-ht1 <- Heatmap(sig_pre_rlogs, 
-         name = "pre-mRNA abundance\nrlog",
-         show_row_names = F,
-         show_row_dend = F)
-
-ht2 <- Heatmap(sig_mat_rlogs, 
-         name = "mature-mRNA abundance\nrlog",
-         show_row_names = F,
-         show_row_dend = F,
-         cluster_columns = F,
-         column_order = column_order(ht1))
-
-draw(ht1 + ht2, column_title = "Increased pre-mRNA \nnot Increased mature")
-```
-
-
-```{r increased_pre_mRNA, fig.height = 14, fig.width = 8}
-
-sig_pre_rlogs <- rlog_counts_pre[rownames(rlog_counts_pre) %in% sig_pre_up$row, ]
-sig_mat_rlogs <- rlog_counts_mat[rownames(rlog_counts_mat) %in% sig_mat_up$row, ]
-
-ht1 <- Heatmap(sig_pre_rlogs, 
-         name = "pre-mRNA abundance\nrlog",
-         show_row_names = F,
-         show_row_dend = F)
-ht1
-ht2 <- Heatmap(sig_mat_rlogs, 
-         name = "mature-mRNA abundance\nrlog",
-         show_row_names = F,
-         show_row_dend = F,
-         cluster_columns = F,
-         column_order = column_order(ht1))
-ht2
-```
-
-Try to order by time to induction...
-
-Examine two time point delta intron delta exon
-
-
-```{r delta_intron, fig.width - 16, fig.height= 16}
-mat_norm_counts <- counts(dds_mature, normalized = T)
-pre_norm_counts <- counts(dds_pre, normalized = T)
-
-common_genes <- intersect(rownames(mat_norm_counts), rownames(pre_norm_counts))
-mat_norm_counts <- mat_norm_counts[common_genes, ] + pre_norm_counts[common_genes, ]
-pre_norm_counts <- pre_norm_counts[common_genes, ]
-
-
-plot_fun <- function(x, y, sig, plt_title = "title") {
-  dat <- data_frame(x, y, label = sig)
-  ggplot(dat, aes(x, y)) +
-    geom_point(aes(color = label)) +
-    coord_equal() +
-    labs(title  = plt_title)
-}
-
-delta_mature <- log2(mat_norm_counts + 1) - log2(rowMeans(mat_norm_counts) + 1)
-delta_pre <- log2(pre_norm_counts + 1) - log2(rowMeans(pre_norm_counts) + 1)
-
-colnames(delta_mature) <- colData(dds_mature)$sampleName
-colnames(delta_pre) <- colData(dds_pre)$sampleName
-
-plts <- map(1:ncol(delta_mature), ~plot_fun(delta_pre[, .x], 
-                                    delta_mature[, .x], 
-                                    rownames(delta_pre) %in% sig_mat_up$row,
-            plt_title = colnames(delta_mature)[.x]))
-
-plot_grid(plotlist = plts, rel_widths = 4, rel_heights = 4)
-```
-
-
-Strictly maternal:
-
-```{r maternal, fig.width - 16, fig.height= 16}
-
-# genes decreased or not -sidnificant post-MZT based on pre-mRNA
-pres <- res_pre_tidy %>% filter(log2FoldChange < 0 | padj  > 0.05)
-mats <- res_mature_tidy %>% filter(log2FoldChange < 0,
-                                   padj < 0.05)
-strictly_mat <- intersect(pres$row, mats$row)
-Heatmap(rlog_counts_mat[rownames(rlog_counts_mat) %in% strictly_mat, ], 
-         name = "mature-mRNA abundance\nrlog",
-         show_row_names = F,
-         show_row_dend = F,
-         cluster_columns = T)
-
-
-Heatmap(rlog_counts_pre[rownames(rlog_counts_pre) %in% strictly_mat, ], 
-         name = "mature-mRNA abundance\nrlog",
-         show_row_names = F,
-         show_row_dend = F,
-         cluster_columns = T)
-
-
-
-delta_mat_mature <- delta_mature[rownames(delta_mature) %in% strictly_mat, ]
-delta_mat_pre <- delta_pre[rownames(delta_pre) %in% strictly_mat, ]
-
-plts <- map(1:ncol(delta_mat_mature), ~plot_fun(delta_mat_pre[, .x], 
-                                    delta_mat_mature[, .x], 
-                                    rownames(delta_mat_pre) %in% sig_mat_down$row,
-            plt_title = colnames(delta_mat_pre)[.x]))
-
-plot_grid(plotlist = plts, rel_widths = 4, rel_heights = 4)
-```
-
-
-## Factor time course analysis
-
-
-```{r}
-files <- dir("salmon_modified", full.names = T)
-
-mature <- str_subset(files, "maturemRNA$")
-pre <- str_subset(files, "premRNA$")
-
-matures <- tximport(mature, 
-         type = "salmon",
-         tx2gene = tx2gene_mapping)
-
-pres <- tximport(pre, 
-         type = "salmon",
-         tx2gene = tx2gene_mapping)
-
-# make metadata sample ordered by columns in count matrix
-pdata <- inner_join(data_frame(public_name = fish_names),
-           mdata, by = "public_name")
-
-pdata <- mutate(pdata, 
-                mzt = ifelse(str_detect(stageName,
-                                        "-cell"),
-                             "maternal",
-                             "zygotic"),
-                stageName = str_replace(stageName, "-", "_"))
-```
-
-
-```{r deseq2_lrt}
-
-dds <- DESeqDataSetFromTximport(matures, pdata, ~stageName)
-dds_mature <- DESeq(dds)
-res_mature <- results(dds_mature)
-res_mature_lrt_tidy <- results(dds_mature, tidy = TRUE)
-
-dds <- DESeqDataSetFromTximport(pres, pdata, ~stageName)
-dds_pre <- DESeq(dds)
-res_pre <- results(dds_pre)
-res_pre_lrt_tidy <- results(dds_pre, tidy = TRUE)
-```
-
-
 ```{r kmeans}
 library(flexclust) #kmeans++
-
-
 
 mature_counts_lrt <- log2(counts(dds_mature, normalized =T) + 1)
 pre_counts_lrt <- log2(counts(dds_pre, normalized = T) + 1)
 
-colnames(mature_counts_lrt) <- colData(dds_mature)$sampleName
-colnames(pre_counts_lrt) <- colData(dds_pre)$sampleName
+colnames(mature_counts_lrt) <- colData(dds_mature)$stageName
+colnames(pre_counts_lrt) <- colData(dds_pre)$stageName
 
 mature_zscores <- t(scale(t(mature_counts_lrt)))
 pre_zscores <- t(scale(t(pre_counts_lrt)))
 
-sig_pre <- res_pre_lrt_tidy[res_pre_lrt_tidy$padj < 0.01, ]
-sig_mat <- res_mature_lrt_tidy[res_mature_lrt_tidy$padj < 0.01, ]
+sig_pre <- res_pre_tidy[res_pre_tidy$padj < 0.01, ]
+sig_mat <- res_mature_tidy[res_mature_tidy$padj < 0.01, ]
 
 sig_pre_zscores <- pre_zscores[rownames(pre_zscores) %in% sig_pre$row, ]
 sig_mature_zscores <- mature_zscores[rownames(mature_zscores) %in% sig_mat$row, ] 
@@ -580,37 +392,28 @@ pre_km <- flexclust::kcca(sig_pre_zscores, k = 10,
 set.seed(20180408)
 mat_km <- flexclust::kcca(sig_mature_zscores, k = 10, 
                         control = list(initcent = "kmeanspp"))
-set.seed(20180408)
 
-mature_zscores_no_na <- mature_zscores[!apply(mature_zscores, 1, function(x) any(is.na(x))),  ]
-common_genes <- intersect(rownames(sig_pre_zscores), rownames(mature_zscores_no_na))
-
-sig_premat <- cbind(sig_pre_zscores[common_genes, ], 
-                    mature_zscores_no_na[common_genes, ])
-
-colnames(sig_premat) <- c(str_c("pre_", colnames(sig_pre_zscores)),
-                          str_c("mature_", colnames(mature_zscores)))
-
-premat_km <- flexclust::kcca(sig_premat, 
-                             k = 15, 
-                        control = list(initcent = "kmeanspp"))
 
 ```
 
 
 ```{r hmaps}
+col_order <- sort(pdata$stageName)
 
 ht1 <- Heatmap(sig_pre_zscores,
          name = "pre-mRNA abundance\nzscore",
          show_row_names = F,
          show_row_dend = F,
+         cluster_columns = F,
          split = pre_km@cluster,
-         km_title = "%i")
+         km_title = "%i", 
+         column_order = col_order)
+
+ht1
 
 pdf("premRNA_kmeans.pdf", width = 8)
 print(ht1)
 dev.off()
-
 
 common_genes <- intersect(rownames(sig_mature_zscores), rownames(sig_pre_zscores))
 ht1_1 <- Heatmap(sig_pre_zscores[common_genes, ],
@@ -618,7 +421,9 @@ ht1_1 <- Heatmap(sig_pre_zscores[common_genes, ],
          show_row_names = F,
          show_row_dend = F,
          split = pre_km@cluster[common_genes],
-         km_title = "%i")
+         km_title = "%i", 
+         cluster_columns = F,
+         column_order = col_order)
 
 ht1_2 <- Heatmap(sig_mature_zscores[common_genes, ],
          name = "mature-mRNA abundance\nzscore",
@@ -631,30 +436,20 @@ pdf("pre_mRNA_kmeans_with_mat.pdf", width = 8)
 print(ht1_1 + ht1_2)
 dev.off()
 
+
 ht2 <- Heatmap(sig_mature_zscores, 
          name = "mature-mRNA abundance\nzscore",
          show_row_names = F,
          show_row_dend = F,
          split = mat_km@cluster,
-         km_title = "%i")
+         km_title = "%i",
+         cluster_columns = F,
+         column_order = col_order)
 ht2
 
 pdf("mat_mRNA_kmeans.pdf", width = 8)
 print(ht2)
 dev.off()
-
-
-ht3 <- Heatmap(sig_premat,
-                name = "pre-mRNA and mRNA abundance\nzscore",
-                show_row_names = F,
-                show_row_dend = F,
-                split = premat_km@cluster,
-                km_title = "%i")
-
-pdf("pre_and_mat_mRNA_kmeans.pdf", width = 8)
-print(ht3)
-dev.off()
-
 
 ```
 

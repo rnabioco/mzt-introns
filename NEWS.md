@@ -5,6 +5,18 @@
   - use the presence of intronic read coverage to indicate `de-novo` transcription
   - apply first to well studied organisms (drosophila, zebrafish), then use as method for less well characterized systems, such as sea urchin. 
 
+## 2018-04-09
+  - met with olivia to discuss analysis of zebrafish and sea urchin
+  - Using clustering to define transcript dynamics identified some
+    clusters in both zebrafish and drosophila with increased transcription
+    prior to the MZT
+  - focus next analysis on three goals:
+      1) Motif searching for 3'UTR elements
+      2) Motif or Chip-Seq data to identify regulatory transcription
+      factors
+      3) Overlap identified zygotic and maternal transcripts with those
+      defined by others using SNP or other RNA-Seq data
+
 ## 2018-03-14
   - updated snakemake pipeline to handle paired end alignements
   - began aligning data

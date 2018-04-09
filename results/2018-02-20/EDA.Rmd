@@ -12,7 +12,7 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_chunk$set(cache = FALSE)
+knitr::opts_chunk$set(cache = TRUE)
 knitr::opts_chunk$set(message = FALSE)
 knitr::opts_chunk$set(warning = FALSE)
 ```
@@ -656,3 +656,108 @@ write_tsv(uppre_notsig_mat, paste0("upregulated_intronic_not_changed_mature_", t
 write_tsv(uppre_sig_downmat, paste0("upregulated_intronic_downregulated_mature_", today, ".tsv"))
 write_tsv(all_gene_measurements, paste0("all_genes_", today, ".tsv"))
 ```
+
+
+## Kmeans classification
+
+
+```{r kmeans}
+library(flexclust) #kmeans++
+
+mature_counts_lrt <- log2(counts(dds_mature, normalized =T) + 1)
+pre_counts_lrt <- log2(counts(dds_pre, normalized = T) + 1)
+
+colnames(mature_counts_lrt) <- as_data_frame(colData(dds_mature)) %>% 
+  mutate(id = str_c(developmental_stage, "::", strain)) %>% pull(id)
+
+colnames(pre_counts_lrt) <- as_data_frame(colData(dds_pre)) %>% 
+  mutate(id = str_c(developmental_stage, "::", strain)) %>% pull(id)
+
+mature_zscores <- t(scale(t(mature_counts_lrt)))
+pre_zscores <- t(scale(t(pre_counts_lrt)))
+
+sig_pre <- res_pre_tidy[res_pre_tidy$padj < 0.05, ]
+sig_mat <- res_mature_tidy[res_mature_tidy$padj < 0.05, ]
+
+sig_pre_zscores <- pre_zscores[rownames(pre_zscores) %in% sig_pre$row, ]
+sig_mature_zscores <- mature_zscores[rownames(mature_zscores) %in% sig_mat$row, ] 
+
+set.seed(20180408)
+pre_km <- flexclust::kcca(sig_pre_zscores, k = 10, 
+                        control = list(initcent = "kmeanspp"))
+set.seed(20180408)
+mat_km <- flexclust::kcca(sig_mature_zscores, k = 10, 
+                        control = list(initcent = "kmeanspp"))
+
+```
+
+
+```{r hmaps}
+
+ht1 <- Heatmap(sig_pre_zscores,
+         name = "pre-mRNA abundance\nzscore",
+         show_row_names = F,
+         show_row_dend = F,
+         split = pre_km@cluster,
+         km_title = "%i")
+
+pdf("fly_premRNA_kmeans.pdf", width = 8)
+print(ht1)
+dev.off()
+
+common_genes <- intersect(rownames(sig_mature_zscores), rownames(sig_pre_zscores))
+ht1_1 <- Heatmap(sig_pre_zscores[common_genes, ],
+         name = "pre-mRNA abundance\nzscore",
+         show_row_names = F,
+         show_row_dend = F,
+         split = pre_km@cluster[common_genes],
+         km_title = "%i")
+
+ht1_2 <- Heatmap(sig_mature_zscores[common_genes, ],
+         name = "mature-mRNA abundance\nzscore",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         column_order = column_order(ht1))
+
+pdf("fly_pre_mRNA_kmeans_with_mat.pdf", width = 8)
+print(ht1_1 + ht1_2)
+dev.off()
+
+ht2 <- Heatmap(sig_mature_zscores, 
+         name = "mature-mRNA abundance\nzscore",
+         show_row_names = F,
+         show_row_dend = F,
+         split = mat_km@cluster,
+         km_title = "%i")
+ht2
+
+pdf("fly_mat_mRNA_kmeans.pdf", width = 8)
+print(ht2)
+dev.off()
+
+```
+
+```{r out_Clusters}
+tx2gene_name <- gtf %>% 
+  filter(type == "gene") %>% 
+  select(gene_name, gene_id) %>% 
+  unique()
+
+pre_clusters <- data_frame(gene_id = names(pre_km@cluster),
+                           cluster = pre_km@cluster)
+mat_clusters <- data_frame(gene_id = names(mat_km@cluster),
+                           cluster = mat_km@cluster)
+
+
+pre_clusters <- left_join(pre_clusters, tx2gene_name, by = "gene_id")
+mat_clusters <- left_join(mat_clusters, tx2gene_name, by = "gene_id")
+
+write_tsv(pre_clusters, "fly_pre_km_clusters.tsv")
+write_tsv(mat_clusters, "fly_mat_km_clusters.tsv")
+
+write.table(mature_counts_lrt, "fly_mature_norm_counts.tsv", sep = "\t", quote = F)
+write.table(pre_counts_lrt, "fly_pre_norm_counts.tsv", sep = "\t", quote = F)
+```
+
+

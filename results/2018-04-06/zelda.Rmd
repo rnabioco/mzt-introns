@@ -1,0 +1,110 @@
+---
+title: "Zelda Binding"
+author: "Kent Riemondy RBI"
+date: "4/6/2018"
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = FALSE)
+```
+
+```{r libs}
+library(valr)
+library(tidyverse)
+library(rtracklayer)
+library(doParallel)
+source("../../R/globals.r")
+```
+
+## Examine zelda binding
+
+
+```{r eisen_dat}
+zelda_chip <- read_tsv("https://doi.org/10.1371/journal.pgen.1002266.s007", 
+              col_names = T, 
+              skip = 1)
+
+zelda_peaks <- dplyr::select(zelda_chip,
+                             chrom = Chr, 
+                             start = From,
+                             end = To,
+                             gene = TSS_gene,
+                             dist = TSS_dist,
+                             score = Height)
+
+zelda_10k <- zelda_peaks %>% filter(dist <= 10000)
+zelda_10k_summed <- group_by(zelda_10k, gene) %>% summarize(binding_sites = n(),
+                                                            score = mean(score))
+```
+
+```{r diff_genes}
+de_res <- read_tsv("../2018-02-20/all_genes_2018-03-29.tsv")
+
+de_res <- left_join(de_res,
+                    zelda_10k_summed,
+                    by = c("gene_name" = "gene")) %>% 
+  mutate(binding_sites = ifelse(is.na(binding_sites),
+                                0,
+                                binding_sites),
+         score = ifelse(is.na(score),
+                        0,
+                        score))
+   #      score = log2(score + 1))
+
+clusters <- read_tsv("../2018-02-20/fly_pre_km_clusters.tsv")
+
+de_res <- left_join(de_res, clusters, by = c("gene_id", "gene_name"))
+
+counts_cols <- read_tsv("../2018-02-20/fly_pre_norm_counts.tsv", col_names = F, n_max = 1)
+counts <- read_tsv("../2018-02-20/fly_pre_norm_counts.tsv", col_names = F, skip = 1)
+colnames(counts) <- c("gene_id", counts_cols)
+counts <- as.data.frame(counts)
+rownames(counts) <- counts[, 1]
+counts[, 1] <- NULL
+
+zscores <- t(scale(t(log2(counts + 1))))
+
+cluster_res <- de_res %>% filter(!is.na(cluster))
+annotation_data <- cluster_res[, c("gene_id", "score", "binding_sites", "cluster")] %>% as.data.frame()
+rownames(annotation_data) <- annotation_data[, 1]
+annotation_data[, 1] <- NULL
+```
+
+```{r hmaps}
+library(ComplexHeatmap)
+library(circlize)
+
+ht <- Heatmap(zscores[rownames(annotation_data), ],
+              name = "pre-mRNA \nZscore",
+              split = annotation_data$cluster,
+              show_row_names = F,
+              show_row_dend = F)
+
+ha <- HeatmapAnnotation(annotation_data[, c("score", "binding_sites")],
+                        col = list(
+                          score = colorRamp2(c(0, max(annotation_data$score, na.rm = T)), 
+                                             c("white", "darkred")),
+                          binding_sites = colorRamp2(c(0, max(annotation_data$binding_sites, 
+                                                              na.rm = T)), c("white", "darkblue"))),
+                        which = "row", width = unit(1, "cm"),
+                        annotation_legend_param = list(score = list(title = "Zelda\nbinding\nscore"),
+                                                       binding_sites = list(title = "N Zelda\nbinding\nsites")))
+ht + ha
+
+pdf("zelda_binding_premRNA_clusters.pdf")
+print(ht + ha)
+dev.off()
+```
+
+```{r cluster_4_genes}
+de_res %>% 
+  filter(cluster == 4) %>% 
+  arrange(`padj_pre-mRNA`)
+```
