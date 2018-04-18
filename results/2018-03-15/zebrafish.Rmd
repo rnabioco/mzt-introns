@@ -554,11 +554,8 @@ res_pre_lrt_tidy <- results(dds_pre, tidy = TRUE)
 ```
 
 
-```{r kmeans}
+```{r zscores}
 library(flexclust) #kmeans++
-
-
-
 mature_counts_lrt <- log2(counts(dds_mature, normalized =T) + 1)
 pre_counts_lrt <- log2(counts(dds_pre, normalized = T) + 1)
 
@@ -573,16 +570,38 @@ sig_mat <- res_mature_lrt_tidy[res_mature_lrt_tidy$padj < 0.01, ]
 
 sig_pre_zscores <- pre_zscores[rownames(pre_zscores) %in% sig_pre$row, ]
 sig_mature_zscores <- mature_zscores[rownames(mature_zscores) %in% sig_mat$row, ] 
+```
 
-set.seed(20180408)
-pre_km <- flexclust::kcca(sig_pre_zscores, k = 10, 
+```{r check_cluster_n}
+mydata <- sig_pre_zscores
+wss <- (nrow(mydata)-1) * sum(apply(mydata,2,var))
+for (i in 2:15) {
+  wss[i] <- sum(kmeans(mydata, centers=i)$withinss)
+}
+dat <- data_frame(Within_sum_of_squares = wss,
+                  n_cluster = seq_along(1:length(wss)))
+
+ggplot(dat,
+       aes(n_cluster, Within_sum_of_squares)) +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = pretty(dat$n_cluster, n = 10))
+```
+
+
+```{r kmeans}
+set.seed(20180416)
+pre_km <- flexclust::kcca(sig_pre_zscores, k = 7, 
                         control = list(initcent = "kmeanspp"))
 set.seed(20180408)
-mat_km <- flexclust::kcca(sig_mature_zscores, k = 10, 
+mat_km <- flexclust::kcca(sig_mature_zscores, k = 7, 
                         control = list(initcent = "kmeanspp"))
 set.seed(20180408)
 
-mature_zscores_no_na <- mature_zscores[!apply(mature_zscores, 1, function(x) any(is.na(x))),  ]
+mature_zscores_no_na <- mature_zscores[!apply(mature_zscores, 
+                                              1, 
+                                              function(x)
+                                                any(is.na(x))),  ]
 common_genes <- intersect(rownames(sig_pre_zscores), rownames(mature_zscores_no_na))
 
 sig_premat <- cbind(sig_pre_zscores[common_genes, ], 
@@ -594,17 +613,37 @@ colnames(sig_premat) <- c(str_c("pre_", colnames(sig_pre_zscores)),
 premat_km <- flexclust::kcca(sig_premat, 
                              k = 15, 
                         control = list(initcent = "kmeanspp"))
-
 ```
 
 
+
+
 ```{r hmaps}
+time_order <- c(
+  "1-cell",
+  "2-cell",
+  "128-cell",
+  "1k-cell",
+  "Dome",
+  "50pc-epiboly",
+  "Shield",
+  "75pc-epiboly")
+
+reorder_ids <- colnames(sig_pre_zscores) %>% 
+  str_remove(., "-[0-9]$")  
+
+reorder_idx <- order(match(reorder_ids, time_order))
+
+sig_pre_zscores <- sig_pre_zscores[, reorder_idx]
+sig_mature_zscores <- sig_mature_zscores[, reorder_idx]
 
 ht1 <- Heatmap(sig_pre_zscores,
          name = "pre-mRNA abundance\nzscore",
          show_row_names = F,
          show_row_dend = F,
          split = pre_km@cluster,
+         cluster_columns = F,
+         column_order = colnames(sig_pre_zscores),
          km_title = "%i")
 
 pdf("premRNA_kmeans.pdf", width = 8)
@@ -612,7 +651,8 @@ print(ht1)
 dev.off()
 
 
-common_genes <- intersect(rownames(sig_mature_zscores), rownames(sig_pre_zscores))
+common_genes <- intersect(rownames(sig_mature_zscores),
+                          rownames(sig_pre_zscores))
 ht1_1 <- Heatmap(sig_pre_zscores[common_genes, ],
          name = "pre-mRNA abundance\nzscore",
          show_row_names = F,
@@ -631,6 +671,28 @@ pdf("pre_mRNA_kmeans_with_mat.pdf", width = 8)
 print(ht1_1 + ht1_2)
 dev.off()
 
+combined_premat_zscores <- cbind(sig_pre_zscores[common_genes, ],
+                       sig_mature_zscores[common_genes, ])
+                       
+new_cols <- c(paste0("pre_",
+                     colnames(combined_premat_zscores)[1:ncol(sig_pre_zscores)]),
+              paste0("mature_",
+                     colnames(combined_premat_zscores)[(ncol(sig_pre_zscores) + 1): ncol(combined_premat_zscores)]))
+
+colnames(combined_premat_zscores) <- new_cols
+
+ht1_1 <- Heatmap(combined_premat_zscores,
+         name = "abundance\nzscore",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         split = pre_km@cluster[common_genes],
+         km_title = "%i")
+
+pdf("pre_mRNA_kmeans_with_mature_clustered.pdf", width = 8)
+print(ht1_1)
+dev.off()
+
 ht2 <- Heatmap(sig_mature_zscores, 
          name = "mature-mRNA abundance\nzscore",
          show_row_names = F,
@@ -644,11 +706,21 @@ print(ht2)
 dev.off()
 
 
+combined_time_order <-paste0(c("pre_", "mature_"), 
+                             rep(time_order, each = 2))
+
+reorder_ids <- colnames(sig_premat) %>% 
+  str_remove(., "-[0-9]$") 
+
+reorder_idx <- order(match(reorder_ids, combined_time_order))
+sig_premat <- sig_premat[, reorder_idx]
+
 ht3 <- Heatmap(sig_premat,
                 name = "pre-mRNA and mRNA abundance\nzscore",
                 show_row_names = F,
                 show_row_dend = F,
                 split = premat_km@cluster,
+                cluster_columns = F,
                 km_title = "%i")
 
 pdf("pre_and_mat_mRNA_kmeans.pdf", width = 8)
@@ -670,6 +742,11 @@ pre_clusters <- data_frame(gene_id = names(pre_km@cluster),
 mat_clusters <- data_frame(gene_id = names(mat_km@cluster),
                            cluster = mat_km@cluster)
 
-pre_clusters <- left_join(pre_clusters, tx2gene_name, by = "gene_id")
-mat_clusters <- left_join(mat_clusters, tx2gene_name, by = "gene_id")
+pre_clusters <- left_join(pre_clusters, tx2gene_name,
+                          by = "gene_id") %>% arrange(cluster)
+mat_clusters <- left_join(mat_clusters, tx2gene_name,
+                          by = "gene_id")  %>% arrange(cluster)
+
+write_tsv(pre_clusters, "premrna_cluster_ids.tsv")
+write_tsv(mat_clusters, "maturerna_cluster_ids.tsv")
 ```

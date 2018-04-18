@@ -696,11 +696,11 @@ ggplot(dat,
   geom_point() +
   scale_x_continuous(breaks = pretty(dat$n_cluster, n = 10))
 
-set.seed(20180408)
-pre_km <- flexclust::kcca(sig_pre_zscores, k = 6, 
+set.seed(20180418)
+pre_km <- flexclust::kcca(sig_pre_zscores, k = 7, 
                         control = list(initcent = "kmeanspp"))
-set.seed(20180408)
-mat_km <- flexclust::kcca(sig_mature_zscores, k = 6, 
+set.seed(20180418)
+mat_km <- flexclust::kcca(sig_mature_zscores, k = 7, 
                         control = list(initcent = "kmeanspp"))
 
 ```
@@ -708,10 +708,36 @@ mat_km <- flexclust::kcca(sig_mature_zscores, k = 6,
 
 ```{r hmaps, fig.width = 10, fig.height = 14}
 
+time_order <- c(
+  "Stage 11 oocyte::wt",
+  "Stage 12 oocyte::wt",
+  "Stage 13 oocyte::wt",
+  "Stage 14 oocyte::wt",
+  "Activated egg::wt",
+  "0-1 hr embryo::wt",
+  "0-1 hr embryo::w1118",
+  "0-1 hr embryo::eGFP-ME31B",
+  "1-2 hr embryo::w1118",
+  "1-2 hr embryo::eGFP-ME31B",  
+  "2-3 hr embryo::wt",
+  "2-3 hr embryo::w1118",
+  "2-3 hr embryo::eGFP-ME31B",  
+  "3-4 hr embryo::wt",
+  "3-4 hr embryo::w1118",
+  "3-4 hr embryo::eGFP-ME31B",
+  "4-5 hr embryo::w1118",
+  "4-5 hr embryo::eGFP-ME31B",
+  "5-6 hr embryo::wt"
+)
+
+sig_pre_zscores <- sig_pre_zscores[, time_order]
+sig_mature_zscores <- sig_mature_zscores[, time_order]
+
 ht1 <- Heatmap(sig_pre_zscores,
-         name = "pre-mRNA abundance\nzscore",
+         name = "pre-mRNA\nabundance\nzscore",
          show_row_names = F,
          show_row_dend = F,
+         cluster_columns = F,
          split = pre_km@cluster,
          km_title = "%i")
 
@@ -719,16 +745,18 @@ pdf("fly_premRNA_kmeans.pdf", width = 8)
 print(ht1)
 dev.off()
 
-common_genes <- intersect(rownames(sig_mature_zscores), rownames(sig_pre_zscores))
+common_genes <- intersect(rownames(sig_mature_zscores), 
+                          rownames(sig_pre_zscores))
 ht1_1 <- Heatmap(sig_pre_zscores[common_genes, ],
-         name = "pre-mRNA abundance\nzscore",
+         name = "pre-mRNA\nabundance\nzscore",
          show_row_names = F,
          show_row_dend = F,
+         cluster_columns = F,
          split = pre_km@cluster[common_genes],
          km_title = "%i")
 
 ht1_2 <- Heatmap(sig_mature_zscores[common_genes, ],
-         name = "mature-mRNA abundance\nzscore",
+         name = "mature-mRNA\nabundance\nzscore",
          show_row_names = F,
          show_row_dend = F,
          cluster_columns = F,
@@ -750,6 +778,27 @@ pdf("fly_mat_mRNA_kmeans.pdf", width = 8)
 print(ht2)
 dev.off()
 
+combined_premat_zscores <- cbind(sig_pre_zscores[common_genes, ],
+                       sig_mature_zscores[common_genes, ])
+                       
+new_cols <- c(paste0("pre_",
+                     colnames(combined_premat_zscores)[1:ncol(sig_pre_zscores)]),
+              paste0("mature_",
+                     colnames(combined_premat_zscores)[(ncol(sig_pre_zscores) + 1): ncol(combined_premat_zscores)]))
+
+colnames(combined_premat_zscores) <- new_cols
+
+ht1_1 <- Heatmap(combined_premat_zscores,
+         name = "abundance\nzscore",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         split = pre_km@cluster[common_genes],
+         km_title = "%i")
+
+pdf("pre_mRNA_kmeans_with_mature_clustered.pdf", width = 10, height = 12)
+draw(ht1_1,  padding = unit(c(15, 2, 2, 2), "mm"))
+dev.off()
 ```
 
 ```{r out_Clusters}
@@ -763,7 +812,6 @@ pre_clusters <- data_frame(gene_id = names(pre_km@cluster),
 mat_clusters <- data_frame(gene_id = names(mat_km@cluster),
                            cluster = mat_km@cluster)
 
-
 pre_clusters <- left_join(pre_clusters, tx2gene_name, by = "gene_id")
 mat_clusters <- left_join(mat_clusters, tx2gene_name, by = "gene_id")
 
@@ -772,6 +820,7 @@ write_tsv(mat_clusters, "fly_mat_km_clusters.tsv")
 
 write.table(mature_counts_lrt, "fly_mature_norm_counts.tsv", sep = "\t", quote = F)
 write.table(pre_counts_lrt, "fly_pre_norm_counts.tsv", sep = "\t", quote = F)
+
 ```
 
 

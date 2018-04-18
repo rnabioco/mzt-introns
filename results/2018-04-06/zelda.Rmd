@@ -107,4 +107,99 @@ dev.off()
 de_res %>% 
   filter(cluster == 4) %>% 
   arrange(`padj_pre-mRNA`)
+
+genes_to_query <- de_res %>% 
+  filter(cluster == 4) %>% 
+  arrange(`padj_pre-mRNA`) %>% 
+  pull(gene_id)
+
+library(kentr)
+gtffile <- "~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
+
+get_3utrs <- function(gtf_file, gene_ids, gene_col = "gene_id", transcript_col = "transcript_id"){
+  gtf <- import(gtf_file)
+  gtf <- as.data.frame(gtf)
+  gtf <- filter(gtf, gene_id %in% gene_ids)
+  gtf <- dplyr::select(gtf, 
+                       chrom = seqnames, 
+                       start, end, type, strand, exon_id, one_of(c(gene_col, transcript_col)))
+  gtf <- dplyr::filter(gtf, 
+                       type %in% c("exon", "CDS"))
+  cds_gtf <- filter(gtf, type == "CDS") %>% 
+         group_by(transcript_id) %>% 
+         summarize(cds_start = unique(ifelse(strand == "+",
+                                  min(start), 
+                                  max(end))),
+                   cds_end = unique(ifelse(strand == "+", 
+                                max(end),
+                                min(start)))) %>% 
+    left_join(gtf, ., by = "transcript_id")
+  
+  cds_gtf <- cds_gtf %>% 
+    filter(type == "exon") %>% 
+    group_by(transcript_id) %>% 
+    mutate(., start = ifelse(strand == "+", cds_end, start), 
+              end = ifelse(strand == "+", end, cds_start)) %>%
+    ungroup() %>% 
+    select(chrom:transcript_id)  %>%
+    filter(start <= end)
+  
+  res <- group_by(cds_gtf, gene_id, strand) %>% 
+    bed_merge() %>% 
+    ungroup()
+  res
+}
+
+genome_file <- "~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
+
+utrs <- get_3utrs(gtffile, de_res$gene_id)
+utr_seqs <- kentr::get_sequences(utrs, genome_file)
+
+#kmers <- mutate(utr_seqs, 
+#                kmers = get_kmers(seq, n = 6)) %>% 
+#                select(gene_id, start, end, kmers) %>% 
+#  unnest()
+#
+#cluster_ids <- select(cluster_res, cluster, gene_id)
+#kmers <- left_join(kmers, cluster_ids, by = "gene_id")
+#
+### calc utr length and sum multiple exons per utr
+#kmers <- mutate(kmers,
+#                exon_len = end - start) %>% 
+#  group_by(gene_id, kmer, cluster) %>% 
+#  summarize(counts = sum(counts),
+#            utr_len = sum(exon_len))
+#
+#kmers <- ungroup(kmers)
+#
+#missing_kmers <- expand.grid(rep(list(c("A", "T", "C", "G")), 6)) %>%
+#  apply(. , 1, function(x) str_c(x, collapse = "")) %>% 
+#  data_frame(kmer = .)
+#
+#missing_kmers <- crossing(kmer = missing_kmers$kmer, 
+#                          gene_id = de_res$gene_id) %>% 
+#  left_join(de_res[, c("gene_id", "cluster")], 
+#            by = "gene_id")
+#
+#kmers <- left_join(missing_kmers, 
+#                   kmers, by = c("kmer", "gene_id", "cluster"))
+#rm(missing_kmers)
+#
+#kmers <- mutate(kmers, 
+#                kmer_density = ifelse(is.na(counts),
+#                                      0,
+#                                      counts / utr_len))
+#
+#mer6_summary <- group_by(kmers, cluster, kmer) %>% 
+#  summarize(kmer_density = mean(counts, na.rm = T)) %>% 
+#  ungroup()
+#
+#mer6_summary <- mutate(mer6_summary,
+#                       cluster = ifelse(is.na(cluster),
+#                                        "background",
+#                                        as.character(cluster)))
+#mer6_summary <- spread(mer6_summary, cluster, kmer_density)
+
 ```
+
+

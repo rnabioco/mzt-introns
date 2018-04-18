@@ -5,6 +5,18 @@
   - use the presence of intronic read coverage to indicate `de-novo` transcription
   - apply first to well studied organisms (drosophila, zebrafish), then use as method for less well characterized systems, such as sea urchin. 
 
+## 2018-04-18
+  - Finalize clustering for drosophila and send heatmaps and cluster Ids to Olivia
+  - Compute miR-430 seed enrichment for zebrafish data
+  - 
+## 2018-04-17
+  - Send olivia clustering information for droshopila and zebrafish
+  - Overlap zygotic transcripts with SNP and other MZT datasets
+  - Decide on motif searching analysis approach:
+      - Try Homer for both promoters and 3'UTRs?
+      - For drosophila use modEncode peaks for promoters and Homer for 3'UTRs?
+      - Note that there are many genes without 3' UTRs in zebrafish, consider adding a 500bp downstream class.
+  
 ## 2018-04-09
   - met with olivia to discuss analysis of zebrafish and sea urchin
   - Using clustering to define transcript dynamics identified some
@@ -39,5 +51,4 @@
   - regorganize into dates and keep running log of work
   - determine if zygotic transcripts are enriched for zelda binding sites (7-mer)
   - put code on github repo
-  
   
