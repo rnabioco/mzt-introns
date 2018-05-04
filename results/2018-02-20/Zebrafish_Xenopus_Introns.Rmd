@@ -403,11 +403,13 @@ write_tsv(res, "eichhorn_zf_plotting_dat.tsv")
 
 bws <- dir(file.path(data_dir, "bigwigs", "zebrafish", "WHITE"), full.names = TRUE, pattern = ".bw")
 
-fwd_bws <- str_subset(bws, "fwd.bw")
-rev_bws <- str_subset(bws, "rev.bw")
+# just run on first replicate
+fwd_bws <- str_subset(bws, "B_fwd.bw")
+rev_bws <- str_subset(bws, "B_rev.bw")
 
-strand_first <- ifelse(str_detect(fwd_bws, "fwd.bw"), "+", "-" )
-strand_second <- ifelse(str_detect(rev_bws, "rev.bw"), "-", "+" )
+
+strand_first <- ifelse(str_detect(fwd_bws, "B_fwd.bw"), "+", "-" )
+strand_second <- ifelse(str_detect(rev_bws, "B_rev.bw"), "-", "+" )
 
 bw_info <- pmap(list(fwd_bws, 
                      rev_bws,
@@ -450,7 +452,7 @@ x_breaks <- seq(1, 101, by = 25)
 
 p <- ggplot(res,
        aes(.win_id, prop_of_max)) + 
-    geom_line(aes(colour = id), size = 0.75, alpha = 0.75) + 
+    geom_line(aes(colour = id), size = 0.5, alpha = 0.75) + 
     facet_grid(~type, labeller = as_labeller(new_facet_names)) +
     scale_colour_viridis(discrete = TRUE,
                        name = "", option =  "D") + 
@@ -462,7 +464,24 @@ p
 
 write_tsv(res, "elife_plotting_dat.tsv")
 save_plot("intron_metagene_zebrafish_elife.pdf", 
-                      p, base_width = 6.5, base_height = 8)
+                      p, base_width = 6.5)
+
+### zoom in
+p <- ggplot(res,
+       aes(.win_id, prop_of_max)) + 
+    geom_line(aes(colour = id), size = 0.5, alpha = 0.75) + 
+    facet_grid(~type, labeller = as_labeller(new_facet_names)) +
+    scale_colour_viridis(discrete = TRUE,
+                       name = "", option =  "D") + 
+    scale_x_continuous(labels = x_labels, breaks = x_breaks) +
+    coord_cartesian(ylim = c(0, 0.10)) + 
+    labs(y = "Proportion of maximum signal",
+         x = "Nucleotides from the splice site")
+
+p
+
+save_plot("intron_metagene_zebrafish_elife_zoomed.pdf", 
+                      p, base_width = 6.5)
 ```
 
 

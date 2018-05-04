@@ -7,7 +7,7 @@
 
 ## 2018-04-18
   - Finalize clustering for drosophila and send heatmaps and cluster Ids to Olivia
-  - Compute miR-430 seed enrichment for zebrafish data
+  - Compute miR-430 seed enrichment for zebrafish data (why?)
   - 
 ## 2018-04-17
   - Send olivia clustering information for droshopila and zebrafish

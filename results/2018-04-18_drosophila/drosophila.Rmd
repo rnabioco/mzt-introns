@@ -271,6 +271,43 @@ ggplot(all_combined,
                                vjust = 0.5,
                                hjust = 0.5)
   )
+
+
+all_combined <- mutate(all_combined,
+                       developmental_stage = factor(developmental_stage,
+                                                    levels = c(
+                                                      "Stage 11 oocyte",
+                                                      "Stage 12 oocyte",
+                                                      "Stage 13 oocyte",
+                                                      "Stage 14 oocyte",
+                                                      "Activated egg",
+                                                      "0-1 hr embryo",
+                                                      "1-2 hr embryo",
+                                                      "2-3 hr embryo",
+                                                      "3-4 hr embryo",
+                                                      "4-5 hr embryo",
+                                                      "5-6 hr embryo")))
+
+
+plt <- ggplot(filter(all_combined, strain != "all strains"), 
+       aes(developmental_stage, mean_primary)) +
+  geom_boxplot(aes(fill = developmental_stage), coef = 1e3) + 
+  facet_grid(~strain, scale = "free") +
+  labs(x = "",
+       y = expression(frac("pre-mRNA TPM", 
+                           "mature + pre-mRNA TPM"))) +
+  scale_fill_brewer(palette = "Paired",
+                    name = "Transcript Type",
+                    breaks = c("pre", "mature"),
+                    labels = c("pre-mRNA", "mature-mRNA")) +
+  theme(
+    axis.text.x = element_text(angle = 90,
+                               vjust = 0.5,
+                               hjust = 0.5),
+    strip.text = element_text(size = 8)
+  )
+
+save_plot("pre-mRNA-ratios.pdf", plt, base_width = 6, base_height = 4.5)
 ```
 
 ## Classify transcripts into maternal or zygotic
@@ -347,21 +384,24 @@ pdata <- mutate(pdata,
                 mzt = ifelse(str_detect(developmental_stage,
                                         "^[2345]-[3456] hr embryo"),
                              "zygotic",
-                             "maternal"))
+                             "maternal"),
+                strain_id = str_replace(strain, "-", "_"))
 ```
 
 
 ```{r deseq2}
 
-dds <- DESeqDataSetFromTximport(matures, pdata, ~mzt)
-dds_mature <- DESeq(dds)
-res_mature <- results(dds_mature)
-res_mature_tidy <- results(dds_mature, tidy = TRUE)
+dds <- DESeqDataSetFromTximport(matures, pdata, ~mzt + strain_id)
+dds <- dds[ rowSums(counts(dds)) > 50, ] 
+dds_mature <- DESeq(dds, test = "LRT", reduced = ~strain_id)
+res_mature <- results(dds_mature, name = "mzt_zygotic_vs_maternal")
+res_mature_tidy <- results(dds_mature, name = "mzt_zygotic_vs_maternal", tidy = TRUE)
 
-dds <- DESeqDataSetFromTximport(pres, pdata, ~mzt)
+dds <- DESeqDataSetFromTximport(pres, pdata, ~mzt + strain_id)
+dds <- dds[ rowSums(counts(dds)) > 50, ] 
 dds_pre <- DESeq(dds)
-res_pre <- results(dds_pre)
-res_pre_tidy <- results(dds_pre, tidy = TRUE)
+res_pre <- results(dds_pre, name = "mzt_zygotic_vs_maternal")
+res_pre_tidy <- results(dds_pre, name = "mzt_zygotic_vs_maternal", tidy = TRUE)
 ```
 
 ```{r}
@@ -369,6 +409,9 @@ pre_plot_dat <- res_pre_tidy %>%
   as_tibble() %>% 
   mutate(sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
                       ifelse(padj < 0.05 & log2FoldChange < 0, "Down", "Not Sig")))
+
+pre_plot_dat <-  pre_plot_dat %>% filter(!is.na(sig))
+
 n_sig_up <- nrow(dplyr::filter(pre_plot_dat, sig == "Up")) %>% 
   formatC(big.mark = ",")
 n_sig_down <- nrow(dplyr::filter(pre_plot_dat, sig == "Down"))  %>% 
@@ -376,27 +419,31 @@ n_sig_down <- nrow(dplyr::filter(pre_plot_dat, sig == "Down"))  %>%
 n_notsig <- nrow(dplyr::filter(pre_plot_dat, sig == "Not Sig"))  %>% 
   formatC(big.mark = ",")
 
-p <- ggplot(pre_plot_dat, 
+pre_plot <- ggplot(pre_plot_dat, 
        aes(baseMean, log2FoldChange)) +
   geom_point(aes(colour = sig), size = 0.1) +
   scale_colour_viridis(discrete = TRUE,
                        name = "",
-                       labels = c(paste0("Sig down (n = ", n_sig_down, ")"),
-                                  paste0("Not Sig (n= ", n_notsig, ")"),
-                                  paste0("Sig up (n = ", n_sig_up, ")"))) +
+                       labels = c(paste0("Significantly decreased (n = ", n_sig_down, ")"),
+                                  paste0("Not Significant (n= ", n_notsig, ")"),
+                                  paste0("Significantly increased (n = ", n_sig_up, ")"))) +
   scale_x_log10() + 
   labs(x = expression(paste("log"[10], " Average Expression")),
        y = expression(paste("log"[2], " ", frac("Zygotic", "Maternal"))),
        title = "pre-mRNA") +
-  guides(colour = guide_legend(override.aes = list(size = 3))) +
+  guides(colour = guide_legend(nrow = 3,
+                               override.aes = list(size = 3))) +
   theme(legend.position = "top")
   
-p
+pre_plot
+
 
 mature_plot_dat <- res_mature_tidy %>% 
   as_tibble() %>% 
   mutate(sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
                       ifelse(padj < 0.05 & log2FoldChange < 0, "Down", "Not Sig")))
+mature_plot_dat <-  mature_plot_dat %>% filter(!is.na(sig))
+
 n_sig_up <- nrow(dplyr::filter(mature_plot_dat, sig == "Up")) %>% 
   formatC(big.mark = ",")
 n_sig_down <- nrow(dplyr::filter(mature_plot_dat, sig == "Down"))  %>% 
@@ -404,22 +451,25 @@ n_sig_down <- nrow(dplyr::filter(mature_plot_dat, sig == "Down"))  %>%
 n_notsig <- nrow(dplyr::filter(mature_plot_dat, sig == "Not Sig"))  %>% 
   formatC(big.mark = ",")
 
-p <- ggplot(mature_plot_dat, 
+ 
+mat_plot <- ggplot(mature_plot_dat, 
        aes(baseMean, log2FoldChange)) +
   geom_point(aes(colour = sig), size = 0.1) +
   scale_colour_viridis(discrete = TRUE,
                        name = "",
-                       labels = c(paste0("Sig down (n = ", n_sig_down, ")"),
-                                  paste0("Not Sig (n= ", n_notsig, ")"),
-                                  paste0("Sig up (n = ", n_sig_up, ")"))) +
+                       labels = c(paste0("Significantly decreased (n = ", n_sig_down, ")"),
+                                  paste0("Not Significant (n= ", n_notsig, ")"),
+                                  paste0("Significantly increased (n = ", n_sig_up, ")"))) +
   scale_x_log10() + 
   labs(x = expression(paste("log"[10], " Average Expression")),
        y = expression(paste("log"[2], " ", frac("Zygotic", "Maternal"))),
        title = "mature-mRNA") +
-  guides(colour = guide_legend(override.aes = list(size = 3))) +
+  guides(colour = guide_legend(nrow = 3, 
+                               override.aes = list(size = 3))) +
   theme(legend.position = "top")
   
-p
+plt <- plot_grid(pre_plot, mat_plot, nrow = 1)
+save_plot("deseq_pre_mat_results.pdf", plt, nrow = 1, ncol = 2)
 ```
 
 
@@ -461,7 +511,7 @@ What are the transcripts that have increased intronic epression, but no increase
 ```{r hmap_intronic_only, fig.height = 14, fig.width = 8}
 interest_txs <- sig_pre_up[!sig_pre_up$row %in% sig_mat_up$row, ]
 
-dds_pre_rlogs <- rlog(dds_pre)
+dds_pre_rlogs <- rlog(dds_pre, blind = F)
 
 # add in colnames
 cols <- pdata %>% 
@@ -471,7 +521,7 @@ cols <- pdata %>%
 rlog_counts_pre <- assay(dds_pre_rlogs)
 colnames(rlog_counts_pre) <- cols
 
-dds_mat_rlogs <- rlog(dds_mature)
+dds_mat_rlogs <- rlog(dds_mature, blind = F)
 
 # add in colnames
 cols <- pdata %>% 
@@ -501,6 +551,7 @@ ht2 <- Heatmap(sig_mat_rlogs,
          column_order = column_order(ht1))
 
 draw(ht1 + ht2, column_title = "Increased pre-mRNA \nnot Increased mature")
+
 ```
 
 
@@ -554,55 +605,7 @@ draw(ht1 + ht2, column_title = "Increased pre-mRNA \n Decreased mature")
 ```
 
 
-### Compare to SNP data called by Michael Eisen's group
 
-```{r eisen_comp, eval = F}
-library("org.Dm.eg.db")
-edata <- read_tsv("https://ndownloader.figshare.com/files/400050")
-
-
-res_tidy <- bind_rows(premRNA = res_pre_tidy, 
-          maturemRNA = res_mature_tidy, .id = "rna_type") %>% 
-  as_tibble()
-
-res_pre_tidy$symbol <- mapIds(org.Dm.eg.db, 
-                            keys=res_tidy$row, 
-                            column="SYMBOL", 
-                            keytype="ENSEMBL",
-                            multiVals="first")
-
-res_tidy$entrez <- mapIds(org.Dm.eg.db, 
-                            keys=res_tidy$row, 
-                            column="ENTREZID", 
-                            keytype="ENSEMBL",
-                            multiVals="first")
-
-res_tidy$name =   mapIds(org.Dm.eg.db,
-                           keys=res_tidy$row, 
-                           column="GENENAME",
-                           keytype="ENSEMBL",
-                           multiVals="first")
-
-
-res_pre_eisen <- edata %>% 
-  dplyr::select(NAME, CLASS) %>% 
-  left_join(res_pre_tidy, ., by = c("symbol" = "NAME")) %>% 
-  dplyr::rename(eisen_class = CLASS)
-
-res_pre_eisen %>% 
-  semi_join(sig_pre_up) %>% 
-  dplyr::count(eisen_class)
-```
-
-### Compare to Zelda peaks
-
-Chip-Seq data taken from http://journals.plos.org/plosgenetics/article?id=10.1371/journal.pgen.1002266 . 
-
-```{r zelda, eval = F}
-
-readxls::read_xlhttps://doi.org/10.1371/journal.pgen.1002266.s007
-
-```
 
 
 ### Output tables
@@ -658,10 +661,118 @@ write_tsv(all_gene_measurements, paste0("all_genes_", today, ".tsv"))
 ```
 
 
+## Compare to SNP data called by Michael Eisen's group
+
+```{r classify_txs, eval = T}
+
+detected_genes <- all_gene_measurements %>% 
+  filter(!is.na(`padj_mature-mRNA`))
+
+mature_counts <- matures$counts
+col_info <- colData(dds_mature) %>% 
+  as_data_frame() %>% 
+  mutate(id = str_c(developmental_stage, "::", strain)) %>% 
+  mutate(stage_classifier = ifelse(str_detect(developmental_stage, "oocyte|egg"),
+                                   "oocyte",
+                                   "zygote"))
+
+colnames(mature_counts) <- col_info$id
+
+maternal_samples <- filter(col_info, stage_classifier == "oocyte") %>% pull("id")
+zygotic_sammples <- filter(col_info, mzt == "zygotic") %>% pull("id")
+
+## select transcripts with at least 10 reads from 3 or more maternal samples (only egg or oocyte)
+maternally_expressed <- rowSums(mature_counts[, maternal_samples] > 10) > 2
+maternally_expressed <- mature_counts[maternally_expressed, maternal_samples]
+
+## find zygotically transcribed transcripts (up in either pre or mature mRNA)
+zygotically_transcribed <- filter(detected_genes,
+                                  (`padj_pre-mRNA` < 0.05 & detected_genes$`log2FoldChange_pre-mRNA` > 0) |
+                                  (`padj_mature-mRNA` < 0.05 & detected_genes$`log2FoldChange_mature-mRNA` > 0))
+
+maternal_and_zygotic <- intersect(rownames(maternally_expressed), 
+                                  zygotically_transcribed$gene_id)
+
+zygotic_only <- setdiff(zygotically_transcribed$gene_id,
+                        rownames(maternally_expressed))
+                        
+maternal_only <- setdiff(rownames(maternally_expressed),
+                         zygotically_transcribed$gene_id)
+
+classifications <- lst(maternal_only,
+      zygotic_only,
+      maternal_and_zygotic)
+
+
+lens <- map_int(classifications, length)
+
+data_frame(type = names(classifications),
+           n_genes = lens)
+
+# Note that monoexonic genes must have increased mature mRNA levels in zygotes to be called zygotic.
+classifications <- bind_rows(map(classifications, ~data_frame(gene_id = .x)), .id = "type")
+
+detected_genes <- left_join(detected_genes, 
+                            classifications,
+                            by = "gene_id")
+```
+
+"Overall, 5,598 genes were classified as maternal, 2,210 as zygotic, and 1,195 and maternal+zygotic (the classification for each gene is listed in Dataset S1)."
+
+```{r}
+edata <- read_tsv("https://ndownloader.figshare.com/files/400050")
+
+res_eisen <- edata %>% 
+  dplyr::select(NAME, CLASS) %>% 
+  left_join(detected_genes, ., 
+            by = c("gene_name" = "NAME"),
+            suffixe) %>% 
+  dplyr::rename(kr_class = type,
+                eisen_class = CLASS)
+
+summary_dat <- res_eisen %>% 
+ group_by(kr_class, eisen_class) %>% 
+ summarize(n())
+
+summary_dat 
+
+res_eisen <- res_eisen %>% 
+  mutate(eisen_class = ifelse(is.na(eisen_class),
+                              "not classified",
+                              eisen_class),
+         kr_class = ifelse(is.na(kr_class),
+                                 "not classified",
+                                 kr_class),
+         kr_class = factor(kr_class,
+                           levels = c(
+                             "maternal_only",
+                             "maternal_and_zygotic",
+                             "zygotic_only",
+                             "not classified"
+                           )))
+
+
+plt <- ggplot(res_eisen, aes(kr_class)) +
+  geom_bar(aes(fill = eisen_class)) +
+  labs(y = "# of genes", x = "intron based classification") +
+  scale_fill_brewer(palette = "Set1", 
+                    name = "SNP based\nclassification\n(Lott et al 2011)") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+plt
+
+save_plot("eisen_vs_intron_classification.pdf", plt)
+
+
+write_tsv(res_eisen, "eisen_vs_intron_classification.tsv")
+
+res_eisen <- read_tsv("eisen_vs_intron_classification.tsv")
+```
+
 ## Kmeans classification
 
-
-```{r kmeans}
+### Normalized counts
+```{r prepare_for_kmeans}
 library(flexclust) #kmeans++
 
 mature_counts_lrt <- log2(counts(dds_mature, normalized =T) + 1)
@@ -696,17 +807,18 @@ ggplot(dat,
   geom_point() +
   scale_x_continuous(breaks = pretty(dat$n_cluster, n = 10))
 
-set.seed(20180418)
-pre_km <- flexclust::kcca(sig_pre_zscores, k = 7, 
-                        control = list(initcent = "kmeanspp"))
-set.seed(20180418)
-mat_km <- flexclust::kcca(sig_mature_zscores, k = 7, 
-                        control = list(initcent = "kmeanspp"))
-
 ```
 
 
 ```{r hmaps, fig.width = 10, fig.height = 14}
+
+set.seed(20180430)
+pre_km <- flexclust::kcca(sig_pre_zscores, k = 5, 
+                        control = list(initcent = "kmeanspp"))
+set.seed(20180430)
+mat_km <- flexclust::kcca(sig_mature_zscores, k = 5, 
+                        control = list(initcent = "kmeanspp"))
+
 
 time_order <- c(
   "Stage 11 oocyte::wt",
@@ -741,12 +853,12 @@ ht1 <- Heatmap(sig_pre_zscores,
          split = pre_km@cluster,
          km_title = "%i")
 
-pdf("fly_premRNA_kmeans.pdf", width = 8)
+pdf("fly_premRNA_kmeans.pdf", width = 5)
 print(ht1)
 dev.off()
 
-common_genes <- intersect(rownames(sig_mature_zscores), 
-                          rownames(sig_pre_zscores))
+
+common_genes <- intersect(rownames(sig_pre_zscores), rownames(mature_zscores))
 ht1_1 <- Heatmap(sig_pre_zscores[common_genes, ],
          name = "pre-mRNA\nabundance\nzscore",
          show_row_names = F,
@@ -755,7 +867,7 @@ ht1_1 <- Heatmap(sig_pre_zscores[common_genes, ],
          split = pre_km@cluster[common_genes],
          km_title = "%i")
 
-ht1_2 <- Heatmap(sig_mature_zscores[common_genes, ],
+ht1_2 <- Heatmap(mature_zscores[common_genes, ],
          name = "mature-mRNA\nabundance\nzscore",
          show_row_names = F,
          show_row_dend = F,
@@ -763,13 +875,14 @@ ht1_2 <- Heatmap(sig_mature_zscores[common_genes, ],
          column_order = column_order(ht1))
 
 pdf("fly_pre_mRNA_kmeans_with_mat.pdf", width = 8)
-print(ht1_1 + ht1_2)
+  print(ht1_1 + ht1_2)
 dev.off()
 
 ht2 <- Heatmap(sig_mature_zscores, 
          name = "mature-mRNA abundance\nzscore",
          show_row_names = F,
          show_row_dend = F,
+         cluster_columns = F,
          split = mat_km@cluster,
          km_title = "%i")
 ht2
@@ -778,8 +891,8 @@ pdf("fly_mat_mRNA_kmeans.pdf", width = 8)
 print(ht2)
 dev.off()
 
-combined_premat_zscores <- cbind(sig_pre_zscores[common_genes, ],
-                       sig_mature_zscores[common_genes, ])
+combined_premat_zscores <- cbind(sig_pre_zscores[common_genes, ], 
+                                 mature_zscores[common_genes, colnames(sig_pre_zscores)])
                        
 new_cols <- c(paste0("pre_",
                      colnames(combined_premat_zscores)[1:ncol(sig_pre_zscores)]),
@@ -799,12 +912,380 @@ ht1_1 <- Heatmap(combined_premat_zscores,
 pdf("pre_mRNA_kmeans_with_mature_clustered.pdf", width = 10, height = 12)
 draw(ht1_1,  padding = unit(c(15, 2, 2, 2), "mm"))
 dev.off()
+
+
+
+shared <- intersect(interest_txs$row, rownames(combined_premat_zscores))
+
+ht1_1 <- Heatmap(combined_premat_zscores[shared, ],
+         name = "abundance\nzscore",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         split = pre_km@cluster[shared],
+         km_title = "%i")
+
+pdf("pre_mRNA_kmeans_with_mature_clustered_no_mature_increase.pdf", width = 10, height = 12)
+draw(ht1_1,  padding = unit(c(15, 2, 2, 2), "mm"))
+dev.off()
+
+
+sig_pre_rlogs <- rlog_counts_pre[rownames(rlog_counts_pre) %in% interest_txs$row, 
+                                 time_order]
+sig_mat_rlogs <- rlog_counts_mat[rownames(rlog_counts_mat) %in% interest_txs$row, 
+                                 time_order]
+ht1 <- Heatmap(sig_pre_rlogs, 
+         name = "pre-mRNA\nrlog",
+         show_row_names = F,
+         show_row_dend = F,
+         show_column_dend = F,
+         cluster_columns = F,
+         split = pre_km@cluster[rownames(sig_pre_rlogs)])
+
+ht2 <- Heatmap(sig_mat_rlogs, 
+         name = "mature-mRNA\nrlog",
+         show_row_names = F,
+         show_row_dend = F,
+         show_column_dend = F,
+         cluster_columns = F,
+         column_order = column_order(ht1))
+
+draw(ht1 + ht2, column_title = "Increased pre-mRNA \nnot Increased mature")
+
+pdf("pre_mRNA_increases_no_increase_mature_log.pdf", width = 6.5)
+draw(ht1 + ht2)
+dev.off()
 ```
 
+
+### Rlogs
+
+```{r hmaps_rlogs, fig.width = 10, fig.height = 14, eval = F}
+
+sig_pre_rlogs <- rlog_counts_pre[rownames(rlog_counts_pre) %in% sig_pre$row, ]
+sig_mature_rlogs <- rlog_counts_mat[rownames(rlog_counts_mat) %in% sig_mat$row, ] 
+
+
+set.seed(20180430)
+pre_km <- flexclust::kcca(sig_pre_rlogs, k = 5, 
+                        control = list(initcent = "kmeanspp"))
+set.seed(20180430)
+mat_km <- flexclust::kcca(sig_mature_rlogs, k = 5, 
+                        control = list(initcent = "kmeanspp"))
+
+
+time_order <- c(
+  "Stage 11 oocyte::wt",
+  "Stage 12 oocyte::wt",
+  "Stage 13 oocyte::wt",
+  "Stage 14 oocyte::wt",
+  "Activated egg::wt",
+  "0-1 hr embryo::wt",
+  "0-1 hr embryo::w1118",
+  "0-1 hr embryo::eGFP-ME31B",
+  "1-2 hr embryo::w1118",
+  "1-2 hr embryo::eGFP-ME31B",  
+  "2-3 hr embryo::wt",
+  "2-3 hr embryo::w1118",
+  "2-3 hr embryo::eGFP-ME31B",  
+  "3-4 hr embryo::wt",
+  "3-4 hr embryo::w1118",
+  "3-4 hr embryo::eGFP-ME31B",
+  "4-5 hr embryo::w1118",
+  "4-5 hr embryo::eGFP-ME31B",
+  "5-6 hr embryo::wt"
+)
+
+sig_pre_rlogs <- sig_pre_rlogs[, time_order]
+sig_mat_rlogs <- sig_mat_rlogs[, time_order]
+
+ht1 <- Heatmap(sig_pre_rlogs,
+         name = "pre-mRNA\nabundance\nrlog",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         split = pre_km@cluster,
+         km_title = "%i")
+
+pdf("fly_premRNA_kmeans_rlog.pdf", width = 8)
+print(ht1)
+dev.off()
+
+
+common_genes <- intersect(rownames(sig_pre_rlogs), rownames(rlog_counts_mat))
+ht1_1 <- Heatmap(sig_pre_rlogs[common_genes, ],
+         name = "pre-mRNA\nabundance\nrlog",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         split = pre_km@cluster[common_genes],
+         km_title = "%i")
+
+ht1_2 <- Heatmap(rlog_counts_mat[common_genes, ],
+         name = "mature-mRNA\nabundance\nrlog",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         column_order = column_order(ht1))
+
+pdf("fly_pre_mRNA_kmeans_with_mat_rlog.pdf", width = 8)
+  print(ht1_1 + ht1_2)
+dev.off()
+
+ht2 <- Heatmap(sig_mat_rlogs, 
+         name = "mature-mRNA abundance\nrlog",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         split = mat_km@cluster,
+         km_title = "%i")
+ht2
+
+pdf("fly_mat_mRNA_kmeans_rlog.pdf", width = 8)
+print(ht2)
+dev.off()
+
+combined_premat_rlogs <- cbind(sig_pre_rlogs[common_genes, ],
+                                 rlog_counts_mat[common_genes, ])
+                       
+new_cols <- c(paste0("pre_",
+                     colnames(combined_premat_rlogs)[1:ncol(sig_pre_rlogs)]),
+              paste0("mature_",
+                     colnames(combined_premat_rlogs)[(ncol(sig_pre_rlogs) + 1): ncol(combined_premat_rlogs)]))
+
+colnames(combined_premat_rlogs) <- new_cols
+
+ht1_1 <- Heatmap(combined_premat_rlogs,
+         name = "abundance\nzscore",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         split = pre_km@cluster[common_genes],
+         km_title = "%i")
+
+pdf("pre_mRNA_kmeans_with_mature_clustered_rlogs.pdf", width = 10, height = 12)
+draw(ht1_1,  padding = unit(c(15, 2, 2, 2), "mm"))
+dev.off()
+```
+
+
+## plot average profile per cluster
+
+```{r avg_prof}
+clust_ids <- pre_km@cluster
+
+avg_profile <- sig_pre_zscores %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% 
+  left_join(., data_frame(gene_id = names(clust_ids),
+                          cluster = clust_ids), by = "gene_id") %>% 
+  gather(sample, zscore, -cluster, -gene_id) %>% 
+  mutate(time = str_split(sample, "::", simplify = T) %>% .[, 1],
+         cluster = as.character(cluster)) %>% 
+  group_by(cluster) %>% 
+  mutate(n_transcripts = length(unique(gene_id))) %>% 
+  group_by(cluster, time, n_transcripts) %>% 
+  summarize(med_zscore = median(zscore)) %>% 
+  ungroup() %>% 
+  mutate(time = factor(time, 
+                       levels = c("Stage 11 oocyte",
+                                  "Stage 12 oocyte",
+                                  "Stage 13 oocyte",
+                                  "Stage 14 oocyte",
+                                  "Activated egg",
+                                  "0-1 hr embryo",
+                                  "1-2 hr embryo",
+                                  "2-3 hr embryo",
+                                  "3-4 hr embryo",
+                                  "4-5 hr embryo",
+                                  "5-6 hr embryo")),
+         cluster = str_c(cluster, " (", formatC(n_transcripts, big.mark = ","), ")"))
+  
+plt <- ggplot(avg_profile, aes(time, med_zscore)) +
+  geom_line(aes(group = cluster, colour = cluster),
+            size = 1.5) +
+  scale_color_brewer(palette = "Paired") + 
+  labs(y = "Expression profile\n(median of z-scores)", x = "") + 
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 1,
+                                   vjust = 0.5))
+
+save_plot("premRNA_expression_per_cluster.pdf", plt, base_width = 5.5)
+```
+
+```{r mat_avg_prof}
+clust_ids <- mat_km@cluster
+
+avg_profile <- sig_mature_zscores %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% 
+  left_join(., data_frame(gene_id = names(clust_ids),
+                          cluster = clust_ids), by = "gene_id") %>% 
+  gather(sample, zscore, -cluster, -gene_id) %>% 
+  mutate(time = str_split(sample, "::", simplify = T) %>% .[, 1],
+         cluster = as.character(cluster)) %>% 
+  group_by(cluster) %>% 
+  mutate(n_transcripts = length(unique(gene_id))) %>% 
+  group_by(cluster, time, n_transcripts) %>% 
+  summarize(med_zscore = median(zscore)) %>% 
+  ungroup() %>% 
+  mutate(time = factor(time, 
+                       levels = c("Stage 11 oocyte",
+                                  "Stage 12 oocyte",
+                                  "Stage 13 oocyte",
+                                  "Stage 14 oocyte",
+                                  "Activated egg",
+                                  "0-1 hr embryo",
+                                  "1-2 hr embryo",
+                                  "2-3 hr embryo",
+                                  "3-4 hr embryo",
+                                  "4-5 hr embryo",
+                                  "5-6 hr embryo")),
+         cluster = str_c(cluster, " (", formatC(n_transcripts, big.mark = ","), ")"))
+  
+plt <- ggplot(avg_profile, aes(time, med_zscore)) +
+  geom_line(aes(group = cluster, colour = cluster),
+            size = 1.5) +
+  scale_color_brewer(palette = "Paired") + 
+  labs(y = "Expression profile\n(median of z-scores)", x = "") + 
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 1,
+                                   vjust = 0.5))
+
+save_plot("matmRNA_expression_per_cluster.pdf", plt, base_width = 5.5)
+```
+
+
+
+### increased pre-mRNA not increased mature
+
+```{r}
+clust_ids <- pre_km@cluster
+
+avg_profile_pre <- pre_counts_lrt[shared, ] %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% 
+  gather(sample, zscore, -gene_id) %>% 
+  mutate(time = str_split(sample, "::", simplify = T) %>% .[, 1]) %>% 
+  group_by(time) %>% 
+  summarize(med_zscore = median(zscore)) %>% 
+  ungroup() %>% 
+  mutate(time = factor(time, 
+                       levels = c("Stage 11 oocyte",
+                                  "Stage 12 oocyte",
+                                  "Stage 13 oocyte",
+                                  "Stage 14 oocyte",
+                                  "Activated egg",
+                                  "0-1 hr embryo",
+                                  "1-2 hr embryo",
+                                  "2-3 hr embryo",
+                                  "3-4 hr embryo",
+                                  "4-5 hr embryo",
+                                  "5-6 hr embryo")))
+  
+
+avg_profile_mature <- mature_counts_lrt[shared, ] %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% 
+  gather(sample, zscore, -gene_id) %>% 
+  mutate(time = str_split(sample, "::", simplify = T) %>% .[, 1]) %>% 
+  group_by(time) %>% 
+  summarize(med_zscore = median(zscore)) %>% 
+  ungroup() %>% 
+  mutate(time = factor(time, 
+                       levels = c("Stage 11 oocyte",
+                                  "Stage 12 oocyte",
+                                  "Stage 13 oocyte",
+                                  "Stage 14 oocyte",
+                                  "Activated egg",
+                                  "0-1 hr embryo",
+                                  "1-2 hr embryo",
+                                  "2-3 hr embryo",
+                                  "3-4 hr embryo",
+                                  "4-5 hr embryo",
+                                  "5-6 hr embryo")))
+
+avg_profile <- bind_rows(`pre-mRNA` = avg_profile_pre,
+                         `mature-mRNA` = avg_profile_mature,
+                         .id = "cluster")
+
+plt <- ggplot(avg_profile, aes(time, med_zscore)) +
+  geom_line(aes(group = cluster, colour = cluster),
+            size = 1.5) +
+  scale_color_brewer(palette = "Paired", name = "") + 
+  labs(y = "Expression profile\n(median of log expression)", x = "") + 
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 1,
+                                   vjust = 0.5),
+        legend.position = "top")
+
+save_plot("premRNA_expression_no_mature_change_logexpr.pdf", plt, base_width = 4)
+
+avg_profile_pre <- sig_pre_zscores[shared, ] %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% 
+  gather(sample, zscore, -gene_id) %>% 
+  mutate(time = str_split(sample, "::", simplify = T) %>% .[, 1]) %>% 
+  group_by(time) %>% 
+  summarize(med_zscore = median(zscore)) %>% 
+  ungroup() %>% 
+  mutate(time = factor(time, 
+                       levels = c("Stage 11 oocyte",
+                                  "Stage 12 oocyte",
+                                  "Stage 13 oocyte",
+                                  "Stage 14 oocyte",
+                                  "Activated egg",
+                                  "0-1 hr embryo",
+                                  "1-2 hr embryo",
+                                  "2-3 hr embryo",
+                                  "3-4 hr embryo",
+                                  "4-5 hr embryo",
+                                  "5-6 hr embryo")))
+  
+
+avg_profile_mature <- mature_zscores[shared, ] %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% 
+  gather(sample, zscore, -gene_id) %>% 
+  mutate(time = str_split(sample, "::", simplify = T) %>% .[, 1]) %>% 
+  group_by(time) %>% 
+  summarize(med_zscore = median(zscore)) %>% 
+  ungroup() %>% 
+  mutate(time = factor(time, 
+                       levels = c("Stage 11 oocyte",
+                                  "Stage 12 oocyte",
+                                  "Stage 13 oocyte",
+                                  "Stage 14 oocyte",
+                                  "Activated egg",
+                                  "0-1 hr embryo",
+                                  "1-2 hr embryo",
+                                  "2-3 hr embryo",
+                                  "3-4 hr embryo",
+                                  "4-5 hr embryo",
+                                  "5-6 hr embryo")))
+
+avg_profile <- bind_rows(`pre-mRNA` = avg_profile_pre,
+                         `mature-mRNA` = avg_profile_mature,
+                         .id = "cluster")
+
+plt <- ggplot(avg_profile, aes(time, med_zscore)) +
+  geom_line(aes(group = cluster, colour = cluster),
+            size = 1.5) +
+  scale_color_brewer(palette = "Paired", name = "") + 
+  labs(y = "Expression profile\n(median of z-scores)", x = "") + 
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 1,
+                                   vjust = 0.5))
+
+save_plot("premRNA_expression_no_mature_change_zscores.pdf", plt, base_width = 5.5)
+```
+
+
+## write out clusters
 ```{r out_Clusters}
 tx2gene_name <- gtf %>% 
   filter(type == "gene") %>% 
-  select(gene_name, gene_id) %>% 
+  dplyr::select(gene_name, gene_id) %>% 
   unique()
 
 pre_clusters <- data_frame(gene_id = names(pre_km@cluster),
@@ -817,6 +1298,9 @@ mat_clusters <- left_join(mat_clusters, tx2gene_name, by = "gene_id")
 
 write_tsv(pre_clusters, "fly_pre_km_clusters.tsv")
 write_tsv(mat_clusters, "fly_mat_km_clusters.tsv")
+
+interest_txs <- left_join(interest_txs, gene2name, by = c("row" = "gene_id"))
+write_tsv(interest_txs, "up_pre_not_up_mature.tsv")
 
 write.table(mature_counts_lrt, "fly_mature_norm_counts.tsv", sep = "\t", quote = F)
 write.table(pre_counts_lrt, "fly_pre_norm_counts.tsv", sep = "\t", quote = F)
