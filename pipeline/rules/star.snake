@@ -41,7 +41,7 @@ rule star_align:
       bam = "{data}/star/{species}/{expt}/{sample}_sorted.bam",
       bai = "{data}/star/{species}/{expt}/{sample}_sorted.bam.bai",
       bg1 = "{data}/star/{species}/{expt}/{sample}_Signal.Unique.str1.out.bg",
-      bg2 = "{data}/star/{species}/{expt}/{sample}_Signal.Unique.str2.out.bg"
+      bg2 =  "{data}/star/{species}/{expt}/{sample}_Signal.Unique.str2.out.bg",
     params:
       use_sjs =  "yes" if SPLICE_JUNCTS else "no", 
       splice_junctions = SPLICE_JUNCTS if SPLICE_JUNCTS else "none",
@@ -84,7 +84,7 @@ rule star_align:
         --outSAMtype BAM SortedByCoordinate --outSAMmode Full \
         --limitSjdbInsertNsj=1500000 \
         --outSAMattributes All  --outSAMattrIHstart 0  --outSAMstrandField intronMotif \
-        --outWigType bedGraph  --outWigNorm RPM --quantMode GeneCounts \
+        --outWigType bedGraph  --outWigNorm None
         $sjunctions
 
       # add XS tag for non-spliced alignments using awkful script from STAR 

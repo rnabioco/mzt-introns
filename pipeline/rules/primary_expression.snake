@@ -55,7 +55,6 @@ def _input_options(wildcards):
       sys.exit("no fastq suffixes found for library: {}".format(id))
   return io_option
     
-    
 rule salmon_idx:
     """
     build salmon on pre-mRNA fasta
@@ -68,6 +67,7 @@ rule salmon_idx:
       path.join(DBASES, "{species}", "salmon", "hash.bin")
     params:
       outname = path.join(DBASES, "{species}", "salmon"),
+      idx_settings = lambda wildcards: SALMON_K[wildcards.species],
       job_name = "salmon_idx",
       memory = "select[mem>50] rusage[mem=50]",
     log:
@@ -80,7 +80,7 @@ rule salmon_idx:
         -p {threads} \
         -t {input.fasta} \
         --type "quasi" \
-        -k 21 \
+        -k {params.idx_settings} \
         -i {params.outname}
       """
 
@@ -111,12 +111,12 @@ rule salmon_primary:
       """
       salmon quant \
         -i {params.idx} \
+        {params.settings} \
         {params.io} \
         -o {params.out_dir} \
         -p {threads} \
         --numBootstraps 50 \
-        {params.settings} \
-        -g {input.gtf}
+        -g {input.gtf} 
       """
 rule primary_transcript_gtf:
     """

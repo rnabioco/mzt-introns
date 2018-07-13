@@ -5,6 +5,36 @@
   - use the presence of intronic read coverage to indicate `de-novo` transcription
   - apply first to well studied organisms (drosophila, zebrafish), then use as method for less well characterized systems, such as sea urchin. 
 
+## 2018-07-13
+  - Have begun using direct intron counting instead of salmon approach.
+    This also allows an annotation mask to be built to exclude translated
+    regions, repeat regions, or intronic sequences present pre-MZT. 
+  - Also found some good datasets with rRNA depleted total RNA samples. 
+
+## 2018-05-11
+  - Zebrafish annotations are problematic for current Salmon based
+    approach. Instead use a more traditional count based method with a
+    curated intron annotation set. Intronic regions can be masked on
+    RepeatMasker, detectable expression in egg/oocyte/1-cell stage, and 
+    overlap with small RNA annotations.
+
+  - Additionally there is a paucity of highly replicated rRNA-depleted
+    datasets, which are useful because transcript quantification is not
+    biased by Cytoplasmic Polyadenylation which occurs in the early
+    embryo. Try to use the total-RNA-Seq datasets to exclude transcripts
+    found in the well replicated poly(A) selected datasets.
+
+  - ribosome profiling data could also be used to define intronic regions.
+    For example we could combine all of the ribosome profiling data from
+    zebrafish, and use this to curate introns within the CDS (which would
+    be the majority). 
+
+  - Lastly, thinking more broadly, this appraoch could help to more
+    clearly resolve the evolutionary relationships between early zygotically
+    transcribed genes across metazoa. Does the pattern of maternal to
+    zygotic gene expression dynamics reflect the Evo-Devo ideas of
+    similarity in embryogeneis, then specialization in later development?
+
 ## 2018-04-18
   - Finalize clustering for drosophila and send heatmaps and cluster Ids to Olivia
   - Compute miR-430 seed enrichment for zebrafish data (why?)

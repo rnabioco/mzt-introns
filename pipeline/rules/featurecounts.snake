@@ -1,0 +1,87 @@
+
+''' rules to count reads overlapping genes '''
+
+def _intron_settings(wildcards):
+  """ lookup global dictionary LIB_MAP via sample
+      wildcard and return settings for featurecounts 
+      based on library type definition 
+  """
+  id = os.path.basename(wildcards.sample)
+  if id in LIB_MAP:
+     lib_attrs = LIB_MAP[id]
+     trim_settings = config[lib_attrs]["intron_count"]
+  else:
+     print("WARNING: no intron settings found for library: {}".format(id),
+       file = sys.stderr)
+     trim_settings = ""
+
+  return trim_settings
+
+def _exon_settings(wildcards):
+  """ lookup global dictionary LIB_MAP via sample
+      wildcard and return settings for featurecounts 
+      based on library type definition 
+  """
+  id = os.path.basename(wildcards.sample)
+  if id in LIB_MAP:
+     lib_attrs = LIB_MAP[id]
+     trim_settings = config[lib_attrs]["exon_count"]
+  else:
+     print("WARNING: no exon settings found for library: {}".format(id),
+       file = sys.stderr)
+     trim_settings = ""
+
+  return trim_settings
+
+rule fc_introns:
+  input:
+    bam = "{data}/star/{species}/{expt}/{sample}_sorted.bam",
+  output:
+    "{data}/featurecounts/{species}/{expt}/{sample}_intron_counts.tsv",
+  params:
+    intron_count = _intron_settings,
+    job_name = "{sample}.bamcount",
+    memory = "select[mem>8] rusage[mem=8]",
+    annots = lambda wildcards: INTRONS[wildcards.species],
+  log:
+    "{data}/featurecounts/logs/{species}/{expt}/{sample}_intron_summary.txt"
+  threads:
+    12
+  resources: all_threads=12
+  shell:
+    """
+    featureCounts \
+     {params.intron_count} \
+    -F 'SAF' \
+    -a {params.annots} \
+    -o {output} \
+    -T {threads} \
+    {input}
+    """
+
+rule fc_exons:
+  input:
+    bam = "{data}/star/{species}/{expt}/{sample}_sorted.bam",
+  output:
+    "{data}/featurecounts/{species}/{expt}/{sample}_exon_counts.tsv",
+  params:
+    exon_count = _exon_settings,
+    job_name = "{sample}.bamcount",
+    memory = "select[mem>8] rusage[mem=8]",
+    annots = lambda wildcards: EXONS[wildcards.species],
+  log:
+    "{data}/featurecounts/logs/{species}/{expt}/{sample}_exon_summary.txt"
+  threads:
+    12
+  resources: all_threads=12
+  shell:
+    """
+    featureCounts \
+     {params.exon_count} \
+    -F 'SAF' \
+    -a {params.annots} \
+    -o {output} \
+    -T {threads} \
+    {input}
+    """
+

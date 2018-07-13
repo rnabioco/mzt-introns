@@ -30,4 +30,5 @@ rule make_bigwigs:
     bedGraphToBigWig {input.reverse}.tmp {params.chroms} {output.revneg}
 
     rm {input.reverse}.tmp {input.forward}.sort {input.reverse}.sort
+    
     """

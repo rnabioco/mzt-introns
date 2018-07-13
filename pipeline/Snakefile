@@ -20,6 +20,10 @@ GENOMES = config["GENOMES"]
 TRANSCRIPTS = config["TRANSCRIPTS"]
 CHROM_SIZES = config["CHROM_SIZES"]
 GENOME_DIRS = config["GENOME_DIRS"]
+SALMON_K = config["SALMON_K"]
+INTRONS = config["INTRONS"]
+EXONS = config["EXONS"]
+
 
 # find all splice junction files (no error if none)
 # if no splice junctions have been generated, then run pipeline through
@@ -53,24 +57,35 @@ print("processing the following libraries")
                                                               LIB_MAP[x])) for i, x in enumerate(SAMPLES)]
 
 rule all:
-  input:
-    expand(path.join(DATA, "salmon", "{species}", "{expt}", "{sample}", "quant.sf"),
-            zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
-      
+  input:  
     #### star alignments ####
-    #expand(path.join(DATA, "star", "logs", "{species}_index_tracking.txt"),
-    #        zip, species = SPECIES),
+    expand(path.join(DATA, "star", "logs", "{species}_index_tracking.txt"),
+            zip, species = SPECIES),
 
-    #expand(path.join(DATA, "star", "{species}", "{expt}", "{sample}_sorted.bam"),
-    #        zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
+    expand(path.join(DATA, "star", "{species}", "{expt}", "{sample}_sorted.bam"),
+            zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
     
-    #expand(path.join(DATA, "star", "{species}", "{expt}", "{sample}_sorted.bam.bai"),
+    expand(path.join(DATA, "star", "{species}", "{expt}", "{sample}_sorted.bam.bai"),
+            zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
+    
+    #### salmon quantification ####
+
+    #expand(path.join(DATA, "salmon", "{species}", "{expt}", "{sample}", "quant.sf"),
     #        zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
 
     #### bigwigs ####
     expand(path.join(DATA, "bigwigs", "{species}", "{expt}", "{sample}_{orient}.bw"),
       zip, sample = SAMPLES, species = SPECIES, expt = EXPTS, orient = len(SAMPLES) * ["fwd", "rev", "rev_neg"]),
 
+    #### exon/intron counts ####
+    expand(path.join(DATA, "featurecounts", "{species}", 
+                     "{expt}", "{sample}_exon_counts.tsv"),
+      zip, sample = SAMPLES, species = SPECIES, expt = EXPTS),
+    
+    expand(path.join(DATA, "featurecounts", "{species}", 
+                     "{expt}", "{sample}_intron_counts.tsv"),
+      zip, sample = SAMPLES, species = SPECIES, expt = EXPTS),
+    
     ##### qc ####
     #expand(path.join(DATA, "qc", "fastqc", "{species}", "{expt}", "{sample}_fastqc/summary.txt"),
     #  zip, sample = SAMPLES, expt = EXPTS, species = SPECIES)
@@ -80,3 +95,4 @@ include: "rules/cutadapt.snake"
 include: "rules/primary_expression.snake"
 include: "rules/star.snake"
 include: "rules/make_bigwigs.snake"
+include: "rules/featurecounts.snake"

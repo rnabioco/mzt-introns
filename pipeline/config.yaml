@@ -13,30 +13,40 @@ DBASES:
   "../dbases" 
 
 GENOMES:
-    drosophila: "/vol3/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
-    xenopus:  "/vol3/home/riemondy/Projects/shared_dbases/genomes/xenopus/jgi_xenla9.2/XL9_2.fa"
-    zebrafish:  "/vol3/home/riemondy/Projects/shared_dbases/genomes/zebrafish/GRCz10/Danio_rerio.GRCz10.dna.toplevel.fa"
-    seaurchin:  "/vol3/home/riemondy/Projects/mzt-introns/dbases/seaurchin/GCF_000002235.4_Spur_4.2_genomic.fa"
+    drosophila: "/beevol/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
+    xenopus:  "/beevol/home/riemondy/Projects/shared_dbases/genomes/xenopus/jgi_xenla9.2/XL9_2.fa"
+    zebrafish:  "/beevol/home/riemondy/Projects/shared_dbases/genomes/zebrafish/danRer10/danRer10.fa"
+    seaurchin:  "/beevol/home/riemondy/Projects/mzt-introns/dbases/seaurchin/GCF_000002235.4_Spur_4.2_genomic.fa"
 
 TRANSCRIPTS:
-    drosophila: "/vol3/home/riemondy/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
-    xenopus: "/vol3/home/riemondy/Projects/shared_dbases/annotation/xenopus/jgi_xenla9.2/XENLA_9.2_Xenbase.gtf"
-    zebrafish: "/vol3/home/riemondy/Projects/shared_dbases/annotation/zebrafish/GRCz10/Danio_rerio.GRCz10.91.gtf"
-    seaurchin:  "/vol3/home/riemondy/Projects/mzt-introns/dbases/seaurchin/GCF_000002235.4_Spur_4.2_genomic.gtf"
+    drosophila: "/beevol/home/riemondy/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
+    xenopus: "/beevol/home/riemondy/Projects/shared_dbases/annotation/xenopus/jgi_xenla9.2/XENLA_9.2_Xenbase.gtf"
+    zebrafish: "/beevol/home/riemondy/Projects/shared_dbases/annotation/zebrafish/danRer10/danRer10.gtf"
+    seaurchin:  "/beevol/home/riemondy/Projects/mzt-introns/dbases/seaurchin/GCF_000002235.4_Spur_4.2_genomic.gtf"
+
+INTRONS:
+    zebrafish: "/beevol/home/riemondy/Projects/mzt-introns/dbases/zebrafish/saf/introns.saf"
+
+EXONS:
+    zebrafish: "/beevol/home/riemondy/Projects/mzt-introns/dbases/zebrafish/saf/exons.saf"
 
 CHROM_SIZES:
-    drosophila: "/vol3/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
-    xenopus:  "/vol3/home/riemondy/Projects/shared_dbases/genomes/xenopus/jgi_xenla9.2/XL9_2.fa.fai"
-    zebrafish:  "/vol3/home/riemondy/Projects/shared_dbases/genomes/zebrafish/GRCz10/Danio_rerio.GRCz10.dna.toplevel.fa.fai"
-    seaurchin:  "/vol3/home/riemondy/Projects/mzt-introns/dbases/seaurchin/GCF_000002235.4_Spur_4.2_genomic.fa.fai"
+    drosophila: "/beevol/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
+    xenopus:  "/beevol/home/riemondy/Projects/shared_dbases/genomes/xenopus/jgi_xenla9.2/XL9_2.fa.fai"
+    zebrafish:  "/beevol/home/riemondy/Projects/shared_dbases/genomes/zebrafish/danRer10/danRer10.fa.fai"
+    seaurchin:  "/beevol/home/riemondy/Projects/mzt-introns/dbases/seaurchin/GCF_000002235.4_Spur_4.2_genomic.fa.fai"
 
 GENOME_DIRS:
-    drosophila: "/vol3/home/riemondy/Projects/shared_dbases/star/drosophila/BDGP6"
-    xenopus: "/vol3/home/riemondy/Projects/shared_dbases/star/xenopus/jgi_xenla9.2"
-    zebrafish: "/vol3/home/riemondy/Projects/shared_dbases/star/zebrafish/GRCz10"
-    seaurchin: "/vol3/home/riemondy/Projects/shared_dbases/star/seaurchin/Spur_4.2"
+    drosophila: "/beevol/home/riemondy/Projects/shared_dbases/star/drosophila/BDGP6"
+    xenopus: "/beevol/home/riemondy/Projects/shared_dbases/star/xenopus/jgi_xenla9.2"
+    zebrafish: "/beevol/home/riemondy/Projects/shared_dbases/star/zebrafish/danRer10"
+    seaurchin: "/beevol/home/riemondy/Projects/shared_dbases/star/seaurchin/Spur_4.2"
 
-
+SALMON_K:
+    drosophila: 21
+    xenopus: 21
+    zebrafish: 31
+    seaurchin: 31
 
 # path to STAR SJ.out.tab file
 # Can be single file or wildcard expression matching multiple files
@@ -46,18 +56,23 @@ SPLICE_JUNCTS:
 EICHHORN:
     trim: " -q 10 -a 'TCGTATGCCGTCTTCTGCTT' -u 8 "
     map: " --fldMean 40 --fldSD 4 --libType 'SF' --seqBias --gcBias "
+    idx: " -k 21 "
     fq: 
         - ".fastq.gz"
 
 RISSLAND:
     trim: " -q 10 -a 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC' "
     map: " --fldMean 200 --fldSD 20 --libType 'SR' --seqBias --gcBias "
+    idx: " -k 21 "
     fq: 
         - ".fastq.gz"
 
 WHITE:
     trim: " "
-    map: " -l ISR "
+    intron_count: " --minOverlap 5 -s 2 -p "
+    exon_count: " --fracOverlap 1 -s 2 -p "
+    map: " -l ISR  --discardOrphansQuasi "
+    idx: " -k 31 "
     fq: 
         - "_1.fastq.gz"
         - "_2.fastq.gz"
