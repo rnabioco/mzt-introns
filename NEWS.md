@@ -5,6 +5,18 @@
   - use the presence of intronic read coverage to indicate `de-novo` transcription
   - apply first to well studied organisms (drosophila, zebrafish), then use as method for less well characterized systems, such as sea urchin. 
 
+## 2018-08-03
+  - Benchmark the following approaches:
+    - Salmon
+    - Salmon with masking repeats and regions w/ coverage
+    - direct counting of unique mappers
+    - direct counting of unique mappers with multimapper rescue
+    
+    Use SNP data from Michael Eisen's group as ground truth for classifications.
+    Run with olivia's rRNA-depleted data and w/ bartel lab poly(A) selected data
+    
+  - Show MA plots with DESeq test for each approach as well. 
+
 ## 2018-07-13
   - Have begun using direct intron counting instead of salmon approach.
     This also allows an annotation mask to be built to exclude translated

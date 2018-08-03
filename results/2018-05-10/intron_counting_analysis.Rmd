@@ -1,0 +1,837 @@
+---
+title: "intron counting analysis"
+author: "Kent Riemondy RBI"
+date: '`r Sys.Date()`'
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+## Zebrafish MZT analysis
+
+A paper describing a very high resolution time course of zebrafish was published recently in eLife [A high-resolution mRNA expression time course of embryonic development in zebrafish](https://elifesciences.org/articles/30860). This dataset will likely provide additional proof of principle data for the intronic analysis performed with drosophila datasets. 
+
+RNA-Seq data (paired-end) from 8 stages surrounding the MZT (or ZGA in zebrafish literature) was downloaded with 5 replicates per time point. The data was processed through salmon similarly to the drosophila data. In contrast to Olivia's drosphila data, these data are poly(A) purified mRNA-Seq libraries, so the intronic signal may be more subtle.  
+
+ 
+## RNA-Seq Libraries
+```{r load_libs}
+source("../../R/globals.r")
+```
+
+
+
+```{r get_metadata}
+mdata <- read_tsv(file.path(data_dir, "raw_data", "zebrafish", 
+                            "WHITE", "elife-30860-supp1-v1.tsv"))
+
+count_data_dir <- file.path(data_dir, 
+                            "featurecounts",
+                            "zebrafish",
+                            "WHITE")
+count_files <- dir(count_data_dir,
+                   pattern = "_counts.tsv$",
+                   recursive = T,
+                   full.names = T)
+
+sample_names <- str_split(count_files, "\\/") %>% 
+  map_chr(., ~.x[10]) %>% 
+  str_replace(., "_counts.tsv", "") 
+
+sample_names_simple <- str_replace(sample_names, "_exon|_intron", "")
+ 
+mdata <- mdata %>% 
+  filter(public_name %in% str_replace(sample_names, "_exon|_intron", ""))
+
+mdata
+```
+
+
+## Alignment %
+
+```{r alignment, eval = F}
+
+```
+
+## Load in featurecounts data
+
+```{r load_dat, message = F}
+
+dat <- map(count_files, read_tsv, skip = 2, 
+           col_types = "c----ci", 
+           col_names = c("gene_id", "length", "counts"))
+
+# name with libraryID
+names(dat) <- sample_names
+
+dat <- bind_rows(dat, .id = "sample_name")
+dat <- mutate(dat, 
+              public_name = str_replace(sample_name, 
+                                             "_exon|_intron", 
+                                             ""),
+              count_type = ifelse(str_detect(sample_name, "exon"),
+                                  "exon",
+                                  "intron"))
+#join with main data
+dat <- inner_join(dat, 
+                  mdata,
+                  by = c("public_name"))
+```
+
+### transcript to gene mapping
+```{r drop_monoexonic}
+gtf <- "~/Projects/shared_dbases/annotation/zebrafish/danRer10/danRer10.gtf"
+gtf <- import(gtf)
+gtf <- as.data.frame(gtf)
+
+gtf_summary <- dplyr::filter(gtf, type == "exon") %>% 
+  dplyr::select(seqnames, start, end, strand, gene_id) %>% 
+  dplyr::rename(chrom = seqnames) %>% 
+  unique() %>% 
+  group_by(gene_id) %>% 
+  bed_merge() %>% 
+  dplyr::summarize(total_exons = n())
+
+monoexonic_genes <- dplyr::filter(gtf_summary, total_exons == 1) %>% pull(gene_id)
+```
+
+
+```{r remove_monoexonic}
+
+dat <- anti_join(dat, 
+                 data_frame(gene_id = monoexonic_genes),
+                 by = "gene_id")
+
+dat <- mutate(dat,
+              monoexonic = gene_id %in% monoexonic_genes)
+
+dat <- group_by(dat, public_name) %>% 
+  mutate(lib_size = sum(counts),
+         eff_length = as.numeric(length) - 150 + 1) %>% 
+  filter(eff_length > 0 ) %>% 
+  mutate(rate = log(counts) - log(eff_length),
+         total_rates = log(sum(exp(rate))),
+         tpm = exp(rate - total_rates + log(1e6)))
+
+```
+
+### plot pre_mRNA ratio
+
+```{r, calc_premRNA}
+# sum primary and mature TPMs for each gene 
+summary_dat <- dplyr::select(dat, tpm, gene_id, 
+              public_name, count_type, stageName, sampleName) %>% 
+  group_by(gene_id, public_name, count_type) %>% 
+  dplyr::summarize(total_tpm = sum(tpm, na.rm = F),
+                   sampleName = unique(sampleName),
+                   stageName = unique(stageName)) %>% 
+  ungroup() 
+
+## calc primary ratio
+tpm_summary <- summary_dat %>% 
+  spread(count_type, total_tpm) %>% 
+  mutate(primary_ratio  = intron / (intron + exon))
+
+## calc mean primary ratio
+tpm_means <- tpm_summary %>% 
+  group_by(gene_id, 
+           stageName) %>% 
+  summarize(mean_primary = mean(primary_ratio,
+                                na.rm = T)) 
+
+tpm_means <- mutate(tpm_means, 
+                       stage = factor(stageName, 
+                                         levels = c(
+                                           "1-cell",
+                                           "2-cell",
+                                           "128-cell",
+                                           "1k-cell",
+                                           "Dome",
+                                           "50pc-epiboly",
+                                           "Shield",
+                                           "75pc-epiboly")
+                                         )
+                       )
+
+
+tpm_means <- dplyr::ungroup(tpm_means)
+
+plt <- ggplot(tpm_means, 
+       aes(stage, mean_primary)) +
+  geom_boxplot(aes(fill = stage), coef = 1e3) + 
+  labs(x = "",
+       y = expression(frac("pre-mRNA TPM", 
+                           "mature + pre-mRNA TPM"))) +
+  scale_fill_brewer(palette = "Paired",
+                    name = "Transcript Type",
+                    breaks = c("pre", "mature"),
+                    labels = c("pre-mRNA", "mature-mRNA")) +
+  theme(
+    axis.text.x = element_text(angle = 90,
+                               vjust = 0.5,
+                               hjust = 0.5)
+  )
+plt
+save_plot("pre_mRNA_ratios.pdf", plt)
+```
+
+There is a very clear increase between the 1k-cell and Dome stages, which are pre and post-MZT stages (3hpf and 4.3hpf respectively).
+
+
+## Classify transcripts into maternal or zygotic
+
+Next I'll try to classify transcripts into catagories based upon their abundance changes throughout embryogenesis. 
+
+```{r}
+count_dat <- map2(count_files, 
+                  sample_names,
+                  ~read_tsv(
+                    .x, 
+                    skip = 2, 
+                    col_types = "c-----i", 
+                    col_names = c("gene_id", .y)))
+
+count_mat <- Reduce(function(x, y) {
+  inner_join(x, y, by = "gene_id")}, 
+  count_dat)
+
+exon_mat <- dplyr::select(count_mat, 
+                          gene_id, 
+                          contains("_exon")) %>% 
+  as.data.frame() %>% 
+  tibble::column_to_rownames("gene_id")
+
+intron_mat <- dplyr::select(count_mat, 
+                            gene_id, 
+                            contains("_intron")) %>% 
+  as.data.frame() %>% 
+  tibble::column_to_rownames("gene_id")
+
+# make metadata sample ordered by columns in count matrix
+pdata <- inner_join(data_frame(public_name = str_replace(colnames(exon_mat), "_exon", "")),
+           mdata, by = "public_name")
+
+pdata <- mutate(pdata, 
+                mzt = ifelse(str_detect(stageName,
+                                        "-cell"),
+                             "maternal",
+                             "zygotic"),
+                stageName = str_replace(stageName, "-", "_"))
+```
+
+
+```{r deseq2_lrt}
+
+dds <- DESeqDataSetFromMatrix(exon_mat, pdata, ~stageName)
+dds <- dds[ rowSums(counts(dds)) > 100, ] 
+dds_mature <- DESeq(dds, test = "LRT", reduced = ~ 1 )
+res_mature <- results(dds_mature, contrast = c("stageName", "Shield", "1_cell"))
+res_mature_lrt_tidy <- results(dds_mature, tidy = TRUE, 
+                               contrast = c("stageName", 
+                                            "Shield",
+                                            "1_cell"))
+
+dds <- DESeqDataSetFromMatrix(intron_mat, pdata, ~stageName)
+dds <- dds[ rowSums(counts(dds)) > 100, ] 
+dds_pre <- DESeq(dds, test = "LRT", reduced = ~ 1 )
+res_pre <- results(dds_pre)
+res_pre_lrt_tidy <- results(dds_pre, tidy = TRUE, 
+                            contrast = c("stageName", 
+                                         "Shield", 
+                                         "1_cell"))
+```
+
+```{r plot_zyg_mat_pre}
+library(eulerr)
+
+sig_mat_up <- res_mature_lrt_tidy %>% filter(padj < 0.01, log2FoldChange > 0)
+sig_pre_up <- res_pre_lrt_tidy %>% filter(padj < 0.01, log2FoldChange > 0)
+all_sig_up <- union(sig_mat_up$row, sig_pre_up$row)
+lgl_up_df <- data.frame(
+  `mature_mRNA` =  all_sig_up %in% sig_mat_up$row,
+  `pre_mRNA` =  all_sig_up %in% sig_pre_up$row
+)
+
+sig_mat_down <- res_mature_lrt_tidy %>% filter(padj < 0.01, log2FoldChange < 0)
+sig_pre_down <- res_pre_lrt_tidy %>% filter(padj < 0.01, log2FoldChange < 0)
+all_sig_down <- union(sig_mat_down$row, sig_pre_down$row)
+lgl_down_df <- data.frame(
+  `mature_mRNA` =  all_sig_down %in% sig_mat_down$row,
+  `pre_mRNA` =  all_sig_down %in% sig_pre_down$row
+)
+
+fit_up <- euler(lgl_up_df)
+fit_down <- euler(lgl_down_df)
+
+plot(fit_up, fill = viridis(2), quantities = TRUE, main = "Increased abundance in Zygotic Stages")
+plot(fit_down, fill = viridis(2), quantities = TRUE, main = "Decreased abundance in Zygotic Stages")
+```
+
+```{r plot_MAs}
+pre_plot_dat <- res_pre_lrt_tidy %>% 
+  as_tibble() %>% 
+  mutate(sig = ifelse(padj < 0.01 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.01 & log2FoldChange < 0, "Down", "Not Sig")))
+n_sig_up <- nrow(dplyr::filter(pre_plot_dat, sig == "Up")) %>% 
+  formatC(big.mark = ",")
+n_sig_down <- nrow(dplyr::filter(pre_plot_dat, sig == "Down"))  %>% 
+  formatC(big.mark = ",")
+n_notsig <- nrow(dplyr::filter(pre_plot_dat, sig == "Not Sig"))  %>% 
+  formatC(big.mark = ",")
+
+p <- ggplot(pre_plot_dat, 
+       aes(baseMean, log2FoldChange)) +
+  geom_point(aes(colour = sig), size = 0.1) +
+  scale_colour_viridis(discrete = TRUE,
+                       name = "",
+                       labels = c(paste0("Sig down (n = ", n_sig_down, ")"),
+                                  paste0("Not Sig (n= ", n_notsig, ")"),
+                                  paste0("Sig up (n = ", n_sig_up, ")"))) +
+  scale_x_log10() + 
+  labs(x = expression(paste("log"[10], " Average Expression")),
+       y = expression(paste("log"[2], " ", frac("Zygotic", "Maternal"))),
+       title = "pre-mRNA") +
+  guides(colour = guide_legend(override.aes = list(size = 3))) +
+  theme(legend.position = "top")
+  
+p
+
+mature_plot_dat <- res_mature_lrt_tidy %>% 
+  as_tibble() %>% 
+  mutate(sig = ifelse(padj < 0.01 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.01 & log2FoldChange < 0, "Down", "Not Sig")))
+n_sig_up <- nrow(dplyr::filter(mature_plot_dat, sig == "Up")) %>% 
+  formatC(big.mark = ",")
+n_sig_down <- nrow(dplyr::filter(mature_plot_dat, sig == "Down"))  %>% 
+  formatC(big.mark = ",")
+n_notsig <- nrow(dplyr::filter(mature_plot_dat, sig == "Not Sig"))  %>% 
+  formatC(big.mark = ",")
+
+p <- ggplot(mature_plot_dat, 
+       aes(baseMean, log2FoldChange)) +
+  geom_point(aes(colour = sig), size = 0.1) +
+  scale_colour_viridis(discrete = TRUE,
+                       name = "",
+                       labels = c(paste0("Sig down (n = ", n_sig_down, ")"),
+                                  paste0("Not Sig (n= ", n_notsig, ")"),
+                                  paste0("Sig up (n = ", n_sig_up, ")"))) +
+  scale_x_log10() + 
+  labs(x = expression(paste("log"[10], " Average Expression")),
+       y = expression(paste("log"[2], " ", frac("Zygotic", "Maternal"))),
+       title = "mature-mRNA") +
+  guides(colour = guide_legend(override.aes = list(size = 3))) +
+  theme(legend.position = "top")
+  
+p
+```
+
+
+```{r hmap_intronic_only, fig.height = 14, fig.width = 8}
+interest_txs <- sig_pre_up[!sig_pre_up$row %in% sig_mat_up$row, ]
+
+dds_pre_rlogs <- rlog(dds_pre, blind = F)
+
+# add in colnames
+cols <- pdata %>% pull(sampleName)
+
+rlog_counts_pre <- assay(dds_pre_rlogs)
+colnames(rlog_counts_pre) <- cols
+
+dds_mat_rlogs <- rlog(dds_mature, blind = F)
+
+rlog_counts_mat <- assay(dds_mat_rlogs)
+colnames(rlog_counts_mat) <- cols
+
+common_genes <- intersect(rownames(rlog_counts_pre),rownames(rlog_counts_mat))
+rlog_counts_pre <- rlog_counts_pre[common_genes, ]
+rlog_counts_mat <- rlog_counts_mat[common_genes, ]
+ 
+sig_pre_rlogs <- rlog_counts_pre[rownames(rlog_counts_pre) %in% interest_txs$row, ]
+sig_mat_rlogs <- rlog_counts_mat[rownames(rlog_counts_mat) %in% interest_txs$row, ]
+
+ht1 <- Heatmap(sig_pre_rlogs, 
+         name = "pre-mRNA abundance\nrlog",
+         show_row_names = F,
+         show_row_dend = F)
+
+ht2 <- Heatmap(sig_mat_rlogs, 
+         name = "mature-mRNA abundance\nrlog",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         column_order = column_order(ht1))
+
+draw(ht1 + ht2, column_title = "Increased pre-mRNA \nnot Increased mature")
+```
+
+## Kmeans
+```{r zscores}
+library(flexclust) #kmeans++
+mature_counts_lrt <- log2(counts(dds_mature, normalized =T) + 1)
+pre_counts_lrt <- log2(counts(dds_pre, normalized = T) + 1)
+
+colnames(mature_counts_lrt) <- colData(dds_mature)$sampleName
+colnames(pre_counts_lrt) <- colData(dds_pre)$sampleName
+
+mature_zscores <- t(scale(t(mature_counts_lrt)))
+pre_zscores <- t(scale(t(pre_counts_lrt)))
+
+sig_pre <- res_pre_lrt_tidy[res_pre_lrt_tidy$padj < 0.01, ]
+sig_mat <- res_mature_lrt_tidy[res_mature_lrt_tidy$padj < 0.01, ]
+
+sig_pre_zscores <- pre_zscores[rownames(pre_zscores) %in% sig_pre$row, ]
+sig_mature_zscores <- mature_zscores[rownames(mature_zscores) %in% sig_mat$row, ] 
+```
+
+```{r check_cluster_n}
+mydata <- sig_pre_zscores
+wss <- (nrow(mydata)-1) * sum(apply(mydata,2,var))
+for (i in 2:15) {
+  wss[i] <- sum(kmeans(mydata, centers=i)$withinss)
+}
+dat <- data_frame(Within_sum_of_squares = wss,
+                  n_cluster = seq_along(1:length(wss)))
+
+ggplot(dat,
+       aes(n_cluster, Within_sum_of_squares)) +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = pretty(dat$n_cluster, n = 10))
+```
+
+
+```{r kmeans}
+set.seed(20180416)
+pre_km <- flexclust::kcca(sig_pre_zscores, k = 7, 
+                        control = list(initcent = "kmeanspp"))
+set.seed(20180408)
+mat_km <- flexclust::kcca(sig_mature_zscores, k = 7, 
+                        control = list(initcent = "kmeanspp"))
+
+mature_zscores_no_na <- mature_zscores[!apply(mature_zscores, 
+                                              1, 
+                                              function(x)
+                                                any(is.na(x))),  ]
+
+common_genes <- intersect(rownames(sig_pre_zscores), rownames(mature_zscores_no_na))
+
+sig_premat <- cbind(sig_pre_zscores[common_genes, ], 
+                    mature_zscores_no_na[common_genes, ])
+
+colnames(sig_premat) <- c(str_c("pre_", colnames(sig_pre_zscores)),
+                          str_c("mature_", colnames(mature_zscores)))
+
+premat_km <- flexclust::kcca(sig_premat, 
+                             k = 15, 
+                        control = list(initcent = "kmeanspp"))
+```
+
+
+
+
+```{r hmaps}
+time_order <- c(
+  "1-cell",
+  "2-cell",
+  "128-cell",
+  "1k-cell",
+  "Dome",
+  "50pc-epiboly",
+  "Shield",
+  "75pc-epiboly")
+
+reorder_ids <- colnames(sig_pre_zscores) %>% 
+  str_remove(., "-[0-9]$")  
+
+reorder_idx <- order(match(reorder_ids, time_order))
+
+sig_pre_zscores <- sig_pre_zscores[, reorder_idx]
+sig_mature_zscores <- sig_mature_zscores[, reorder_idx]
+mature_zscores_no_na <- mature_zscores_no_na[, reorder_idx]
+
+ht1 <- Heatmap(sig_pre_zscores,
+         name = "pre-mRNA abundance\nzscore",
+         show_row_names = F,
+         show_row_dend = F,
+         split = pre_km@cluster,
+         cluster_columns = F,
+         column_order = colnames(sig_pre_zscores),
+         km_title = "%i")
+
+pdf("zebrafish_premRNA_kmeans.pdf", width = 8)
+print(ht1)
+dev.off()
+
+
+common_genes <- intersect(rownames(mature_zscores_no_na),
+                          rownames(sig_pre_zscores))
+ht1_1 <- Heatmap(sig_pre_zscores[common_genes, ],
+         name = "pre-mRNA abundance\nzscore",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         split = pre_km@cluster[common_genes],
+         km_title = "%i")
+
+ht1_2 <- Heatmap(mature_zscores_no_na[common_genes, ],
+         name = "mature-mRNA abundance\nzscore",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         column_order = column_order(ht1))
+
+pdf("zebrafish_pre_mRNA_kmeans_with_mat.pdf", width = 8)
+print(ht1_1 + ht1_2)
+dev.off()
+
+combined_premat_zscores <- cbind(sig_pre_zscores[common_genes, ],
+                       mature_zscores_no_na[common_genes, ])
+                       
+new_cols <- c(paste0("pre_",
+                     colnames(combined_premat_zscores)[1:ncol(sig_pre_zscores)]),
+              paste0("mature_",
+                     colnames(combined_premat_zscores)[(ncol(sig_pre_zscores) + 1): ncol(combined_premat_zscores)]))
+
+colnames(combined_premat_zscores) <- new_cols
+
+ht1_1 <- Heatmap(combined_premat_zscores,
+         name = "abundance\nzscore",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         split = pre_km@cluster[common_genes],
+         km_title = "%i")
+
+pdf("zebrafish_pre_mRNA_kmeans_with_mature_clustered.pdf", width = 10, height = 12)
+draw(ht1_1, padding = unit(c(15, 2, 2, 2), "mm"))
+dev.off()
+
+ht2 <- Heatmap(sig_mature_zscores, 
+         name = "mature-mRNA abundance\nzscore",
+         show_row_names = F,
+         show_row_dend = F,
+         cluster_columns = F,
+         split = mat_km@cluster,
+         km_title = "%i")
+ht2
+
+pdf("mat_mRNA_kmeans.pdf", width = 8)
+print(ht2)
+dev.off()
+
+
+combined_time_order <-paste0(c("pre_", "mature_"), 
+                             rep(time_order, each = 2))
+
+reorder_ids <- colnames(sig_premat) %>% 
+  str_remove(., "-[0-9]$") 
+
+reorder_idx <- order(match(reorder_ids, combined_time_order))
+sig_premat <- sig_premat[, reorder_idx]
+
+ht3 <- Heatmap(sig_premat,
+                name = "pre-mRNA and mRNA abundance\nzscore",
+                show_row_names = F,
+                show_row_dend = F,
+                split = premat_km@cluster,
+                cluster_columns = F,
+                km_title = "%i")
+
+pdf("pre_and_mat_mRNA_kmeans.pdf", width = 8)
+draw(ht3, padding = unit(c(15, 2, 2, 2), "mm"))
+dev.off()
+
+
+```
+
+### plot average profile per cluster
+
+```{r avg_prof}
+clust_ids <- pre_km@cluster
+
+avg_profile <- sig_pre_zscores %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% 
+  left_join(., data_frame(gene_id = names(clust_ids),
+                          cluster = clust_ids), by = "gene_id") %>% 
+  gather(sample, zscore, -cluster, -gene_id) %>% 
+  mutate(time = str_split(sample, "-[0-9]", simplify = T) %>% .[, 1],
+         cluster = as.character(cluster)) %>% 
+  group_by(cluster) %>% 
+  mutate(n_transcripts = length(unique(gene_id))) %>% 
+  group_by(cluster, time, n_transcripts) %>% 
+  summarize(med_zscore = median(zscore)) %>% 
+  ungroup() %>% 
+  mutate(time = factor(time, 
+                       levels = time_order),
+         cluster = str_c(cluster, " (", formatC(n_transcripts, big.mark = ","), ")"))
+  
+plt <- ggplot(avg_profile, aes(time, med_zscore)) +
+  geom_line(aes(group = cluster, colour = cluster),
+            size = 1.5) +
+  scale_color_brewer(palette = "Paired") + 
+  labs(y = "Expression profile\n(median of z-scores)", x = "") + 
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 1,
+                                   vjust = 0.5))
+
+save_plot("expression_per_cluster.pdf", plt, base_width = 6)
+```
+
+
+```{r mat_avg_prof}
+clust_ids <- mat_km@cluster
+
+avg_profile <- sig_mature_zscores %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% 
+  left_join(., data_frame(gene_id = names(clust_ids),
+                          cluster = clust_ids), by = "gene_id") %>% 
+  gather(sample, zscore, -cluster, -gene_id) %>% 
+  mutate(time = str_split(sample, "-[0-9]", simplify = T) %>% .[, 1],
+         cluster = as.character(cluster)) %>% 
+  group_by(cluster) %>% 
+  mutate(n_transcripts = length(unique(gene_id))) %>% 
+  group_by(cluster, time, n_transcripts) %>% 
+  summarize(med_zscore = median(zscore)) %>% 
+  ungroup() %>% 
+ mutate(time = factor(time, 
+                       levels = time_order),
+         cluster = str_c(cluster, " (", formatC(n_transcripts, big.mark = ","), ")"))
+  
+plt <- ggplot(avg_profile, aes(time, med_zscore)) +
+  geom_line(aes(group = cluster, colour = cluster),
+            size = 1.5) +
+  scale_color_brewer(palette = "Paired") + 
+  labs(y = "Expression profile\n(median of z-scores)", x = "") + 
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 1,
+                                   vjust = 0.5))
+
+save_plot("matmRNA_expression_per_cluster.pdf", plt, base_width = 5.5)
+```
+
+
+
+### increased pre-mRNA not increased mature
+
+```{r}
+
+interesting_txs <- left_join(interest_txs,
+                             data_frame(gene_id = names(pre_km@cluster),
+                                        cluster = pre_km@cluster),
+                             by = c("row" = "gene_id"))
+
+shared <- intersect(rownames(mature_counts_lrt), interesting_txs$row) 
+
+avg_profile_pre <- pre_counts_lrt[shared, ] %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% 
+  gather(sample, zscore, -gene_id) %>% 
+  mutate(time = str_split(sample, "-[0-9]", simplify = T) %>% .[, 1]) %>% 
+  group_by(time) %>% 
+  summarize(med_zscore = median(zscore)) %>% 
+  ungroup() %>% 
+ mutate(time = factor(time, 
+                       levels = time_order))
+  
+
+avg_profile_mature <- mature_counts_lrt[shared, ] %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% 
+  gather(sample, zscore, -gene_id) %>% 
+  mutate(time = str_split(sample, "-[0-9]", simplify = T) %>% .[, 1]) %>% 
+  group_by(time) %>% 
+  summarize(med_zscore = median(zscore)) %>% 
+  ungroup() %>% 
+ mutate(time = factor(time, 
+                       levels = time_order))
+
+avg_profile <- bind_rows(`pre-mRNA` = avg_profile_pre,
+                         `mature-mRNA` = avg_profile_mature,
+                         .id = "cluster")
+
+plt <- ggplot(avg_profile, aes(time, med_zscore)) +
+  geom_line(aes(group = cluster, colour = cluster),
+            size = 1.5) +
+  scale_color_brewer(palette = "Paired", name = "") + 
+  labs(y = "Expression profile\n(median of z-scores)", x = "") + 
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 1,
+                                   vjust = 0.5))
+
+save_plot("premRNA_expression_no_mature_change_logexpr.pdf", plt, base_width = 5.5)
+
+avg_profile_pre <- sig_pre_zscores[shared, ] %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% 
+  gather(sample, zscore, -gene_id) %>% 
+  mutate(time = str_split(sample, "-[0-9]", simplify = T) %>% .[, 1]) %>% 
+  group_by(time) %>% 
+  summarize(med_zscore = median(zscore)) %>% 
+  ungroup() %>% 
+  mutate(time = factor(time, 
+                       levels = time_order))
+  
+
+avg_profile_mature <- mature_zscores[shared, ] %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% 
+  gather(sample, zscore, -gene_id) %>% 
+  mutate(time = str_split(sample, "-[0-9]", simplify = T) %>% .[, 1]) %>% 
+  group_by(time) %>% 
+  summarize(med_zscore = median(zscore)) %>% 
+  ungroup() %>% 
+  mutate(time = factor(time, 
+                       levels = time_order))
+
+avg_profile <- bind_rows(`pre-mRNA` = avg_profile_pre,
+                         `mature-mRNA` = avg_profile_mature,
+                         .id = "cluster")
+
+plt <- ggplot(avg_profile, aes(time, med_zscore)) +
+  geom_line(aes(group = cluster, colour = cluster),
+            size = 1.5) +
+  scale_color_brewer(palette = "Paired", name = "") + 
+  labs(y = "Expression profile\n(median of z-scores)", x = "") + 
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 1,
+                                   vjust = 0.5))
+
+save_plot("premRNA_expression_no_mature_change_zscores.pdf", plt, base_width = 5.5)
+```
+
+
+## out files
+```{r gene_names}
+tx2gene_name <- gtf %>% 
+  filter(type == "gene") %>% 
+  dplyr::select(gene_name, gene_id) %>% 
+  unique()
+
+pre_clusters <- data_frame(gene_id = names(pre_km@cluster),
+                           cluster = pre_km@cluster)
+mat_clusters <- data_frame(gene_id = names(mat_km@cluster),
+                           cluster = mat_km@cluster)
+
+pre_clusters <- left_join(pre_clusters, tx2gene_name,
+                          by = "gene_id") %>% arrange(cluster)
+mat_clusters <- left_join(mat_clusters, tx2gene_name,
+                          by = "gene_id")  %>% arrange(cluster)
+
+write_tsv(pre_clusters, "zebrafish_premrna_cluster_ids.tsv")
+write_tsv(mat_clusters, "zebrafish_maturerna_cluster_ids.tsv")
+
+write.table(mature_counts_lrt, 
+            "zebrafish_mature_norm_counts.tsv", sep = "\t", quote = F)
+write.table(pre_counts_lrt, 
+            "zebrafish_pre_norm_counts.tsv", sep = "\t", quote = F)
+
+combined_pre <- left_join(pre_clusters, 
+          res_mature_lrt_tidy,
+          by = c("gene_id" = "row"),
+          suffix = c("", "_mature")) %>% 
+  left_join(., res_pre_lrt_tidy, 
+            by = c("gene_id" = "row"),
+          suffix = c("", "_pre"))
+
+write_tsv(combined_pre, "pre_mRNA_deseq.tsv")
+
+plt_dat <- mutate(combined_pre, 
+                  cluster = as.character(cluster))
+mat <- ggplot(plt_dat, aes(cluster, baseMean)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  labs(y = "baseMean mature mRNA")
+
+pre <- ggplot(plt_dat, aes(cluster, baseMean_pre)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  labs(y = "baseMean pre mRNA")
+
+plot_grid(mat, pre)
+
+```
+
+
+## Compare to known genes
+```{r compare_to_nature_paper}
+if(!file.exists("nature12632-s1.txt")) {
+  download.file("https://media.nature.com/original/nature-assets/nature/journal/v503/n7476/extref/nature12632-s1.txt", "nature12632-s1.txt")
+}
+
+lee_et_al <- read_tsv("nature12632-s1.txt", comment = "#", skip = 1)
+table(lee_et_al$Maternal_contr)
+
+
+
+if(!file.exists("elife_clusters.tst")){
+  download.file("https://elifesciences.org/download/aHR0cHM6Ly9jZG4uZWxpZmVzY2llbmNlcy5vcmcvYXJ0aWNsZXMvMzA4NjAvZWxpZmUtMzA4NjAtc3VwcDUtdjEudHN2/elife-30860-supp5-v1.tsv?_hash=xtF7pnqjJLD8DKvKxzIQXrvZ0%2FEmCNOjS1LhNZxJH%2Fw%3D", 
+                "elife_clusters.txt")
+}
+elife <- read_tsv("elife_clusters.txt")
+
+elife_with_precluster <- left_join(pre_clusters, elife, by = "gene_id") %>% 
+  left_join(., res_pre_lrt_tidy, 
+            by = c("gene_id" = "row")) %>% 
+  left_join(., mat_clusters, by = "gene_id") %>% 
+  left_join(., res_mature_lrt_tidy, 
+            by = c("gene_id" = "row")) %>% 
+  left_join(., lee_et_al, by = c("gene_id" = "Gene_id"))
+```
+
+
+## Poly (A) Tail lengths
+
+```{r}
+dir.create("pas_seq")
+download.file("https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE52809&format=file&file=GSE52809%5FDre%5Fmock%5F2hpf%2Etxt%2Egz", "pas_Seq/2hr.txt.gz")
+download.file("https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE52809&format=file&file=GSE52809%5FDre%5Fmock%5F4hpf%2Etxt%2Egz", "pas_Seq/4hr.txt.gz")
+download.file("https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE52809&format=file&file=GSE52809%5FDre%5Fmock%5F6hpf%2Etxt%2Egz", "pas_Seq/6hr.txt.gz")
+```
+
+
+```{r}
+files <- dir("pas_seq", full.names = T)
+pas <- map(files, read_tsv, skip = 2)
+names(pas) <- basename(files) %>% str_replace(".txt.gz", "")
+pas <- bind_rows(pas, .id = "time")
+
+clusters <- read_tsv("zebrafish_premrna_cluster_ids.tsv")
+
+pas_clusters <- inner_join(clusters, pas, by = c("gene_id" = "Gene name"))
+pas_clusters <- pas_clusters %>% 
+  filter(`Poly(A) tags` > 50) %>% 
+  select(gene_id, gene_name, cluster, time, `Mean TL`) %>% 
+  mutate(cluster = as.factor(cluster))
+
+plt <- ggplot(pas_clusters, aes(cluster, `Mean TL`)) +
+  geom_boxplot(aes(fill = time), coef = Inf) +
+  labs(y = "Mean Poly(A) tail length\nSubtelny et. al.") +
+  scale_fill_viridis_d()
+
+save_plot("polya_tails.pdf", plt)
+```
+
+
+```{r}
+
+download.file("http://www.biologists.com/DEV_Movies/DEV095091/DEV095091TableS7.xls", "s7.xls")
+
+preMBT <- readxl::read_excel("s7.xls", skip = 1)
+
+cpe_genes <- inner_join(clusters, preMBT, by = c("gene_id" = "test_id"))
+
+group_by(cpe_genes, cluster) %>% 
+  summarize(n())
+```

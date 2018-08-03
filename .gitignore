@@ -28,3 +28,6 @@ pipeline/logs/*
 *.bed
 *.bam*
 *.xls*
+*.tsv*
+*.fa
+*.saf

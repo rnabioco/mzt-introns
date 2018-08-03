@@ -1,0 +1,145 @@
+---
+title: "intron annotations xenopus tropicalis"
+author: "Kent Riemondy RBI"
+date: "`R sys.date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+```{r libs}
+library(valr)
+library(tidyverse)
+library(rtracklayer)
+library(doParallel)
+source("../../R/globals.r")
+```
+
+
+```{r annot}
+gtf <- "~/Projects/shared_dbases/annotation/xenopus/jgi_xentrop9.1/xenTro9.gtf"
+gtf <- import(gtf)
+gtf <- as.data.frame(gtf) %>% tbl_df()
+```
+
+## Compute coverage from pre-ZGA samples (1-cell)
+
+To define introns, all intronic mRNA regions with coverage in the pre-ZGA samples (1-cell to be restrictive) will be masked and excluded from the intronic set used for counting. There are 5 samples from the 1-cell stage that will be summed and used to define the masking annotations for introns.
+
+```{r coverage_tracks}
+mdata <- read_tsv(file.path(data_dir, "raw_data", "xenopus_t", 
+                             "OWENS", "PRJNA275011.txt"))
+
+early_samples <- mutate(mdata, 
+                        timepoint = str_match(sample_title,
+                                              "_([0-9.]+)_")[, 2],
+                        timepoint = as.numeric(timepoint),
+                        clutch = str_match(sample_title, 
+                                           "^Clutch([AB])")[, 2]) %>%  
+                        filter(timepoint < 1,
+                               clutch == "A")
+
+bws <- dir(file.path(data_dir, "bigwigs", "xenopus_t", "OWENS"), 
+           full.names = TRUE, 
+           pattern = ".bw")
+
+bws <- str_subset(bws, str_c(early_samples$run_accession, 
+                             collapse = "|"))
+
+fwd_bws <- str_subset(bws, "fwd.bw")
+rev_bws <- str_subset(bws, "rev.bw")
+
+# data is unstranded
+
+# sum coverage
+coverage_df <- map_dfr(c(fwd_bws, rev_bws),
+                  ~read_bigwig(.x, set_strand = "+"))
+
+coverage_df <- bed_partition(coverage_df, 
+                             score = sum(score))
+
+ivl_df <- select(coverage_df, chrom:score, strand)
+```
+
+Next exclude exonic regions and keep regions with at least 2 reads. These regions will be excluded from intron intervals for computing intron coverage. Also add repeatMasker regions. (downloaded from ucsc table browser 2018-07-09)
+
+```{r drop_exons}
+
+updated_gtf <- add_tx_annotations(gtf)
+gtf_df <- mutate(updated_gtf,
+                 start = start - 1,
+                 chrom = as.character(seqnames),
+                 strand = as.character(strand)) %>% 
+  bed_sort()
+
+exons <- filter(gtf_df, type == "exon") %>%  
+  dplyr::select(chrom,
+                start, 
+                end, 
+                transcript_id,
+                exon_number,
+                strand) %>% 
+  bed_sort() %>% 
+  group_by(strand)
+
+ivl_df <- group_by(ivl_df, strand)
+intron_coverage <- bed_subtract(ivl_df, exons)
+
+masked_ivls <- filter(intron_coverage, score > 1) %>% 
+  group_by(strand) %>% 
+  bed_merge() %>% 
+  ungroup()
+
+rpts <- read_bed(file.path(db_dir, "xenopus_t", 
+                           "xentrop_rmsk.bed.gz"), n_fields = 6)
+
+masked_ivls <- bind_rows(rpts, masked_ivls)
+masked_ivls <- dplyr::select(masked_ivls,
+                             chrom:end, strand)
+
+introns <- filter(gtf_df, type == "transcript") %>% 
+  select(chrom, start, end, gene_name, strand) %>% 
+  unique() %>% 
+  group_by(strand) %>% 
+  bed_subtract(exons) %>% 
+  bed_subtract(masked_ivls) %>% 
+  unique()
+
+introns_out <- introns %>% 
+  mutate(score = 0L) %>% 
+  select(chrom, start, end, gene_name, score, strand) %>% 
+  mutate_if(is.numeric, format, scientific = F) %>% 
+  mutate_all(str_trim)
+
+write_tsv(introns_out, "xentrop_introns.bed", col_names = F)
+introns_out %>%
+  dplyr::select(
+  GeneID = gene_name,
+  Chr = chrom,
+  Start = start,
+  End = end,
+  Strand = strand
+  ) %>%
+  write_tsv(., "xentrop_introns.saf")
+
+exons_out <- filter(gtf_df, type == "exon") %>%  
+  dplyr::select(chrom,
+                start, 
+                end, 
+                gene_name,
+                exon_number,
+                strand) %>% 
+  bed_sort() %>% 
+  mutate_if(is.numeric, format, scientific = F)  %>% 
+  mutate_all(str_trim)
+
+write_tsv(exons_out, "xentrop_exons.bed", col_names = F)
+
+exons_out %>% 
+  dplyr::select(GeneID = gene_name, Chr = chrom, Start = start, End = end, Strand = strand) %>% 
+  write_tsv(., "xentrop_exons.saf")
+
+```
