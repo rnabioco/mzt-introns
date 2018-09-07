@@ -23,6 +23,9 @@ source("../../R/globals.r")
 gtf <- "~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
 gtf <- import(gtf)
 gtf <- as.data.frame(gtf) %>% tbl_df()
+
+chrom_sizes <- read_tsv("~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai", col_types = 'ci---', 
+                        col_names = c("chrom", "size"))
 ```
 
 ## Compute coverage from pre-ZGA samples (1-cell)
@@ -73,8 +76,8 @@ rev_df <- bed_partition(rev_df,
                         score = sum(score))
 
 ivl_df <- bind_rows(list(
-  "-" = fwd_df,
-  "+" = rev_df),
+  "+" = fwd_df,
+  "-" = rev_df),
   .id = "strand")
 
 ivl_df <- dplyr::select(ivl_df, chrom:score, strand)
@@ -103,20 +106,90 @@ exons <- filter(gtf_df, type == "exon") %>%
 ivl_df <- group_by(ivl_df, strand)
 intron_coverage <- bed_subtract(ivl_df, exons)
 
-masked_ivls <- filter(intron_coverage, score > 1) %>% 
+masked_ivls <- filter(intron_coverage, score > 0) %>% 
   group_by(strand) %>% 
   bed_merge() %>% 
   ungroup()
 
+```
+
+```{r}
 #rpts <- read_bed(file.path(db_dir, "drosophila", 
 #                           "drosophila_rmsk.bed.gz"), n_fields = 6)
-
+#
 #masked_ivls <- bind_rows(rpts, masked_ivls)
 #masked_ivls <- dplyr::select(masked_ivls,
-#                             chrom:end, strand)
+#                             chrom:end, strand) %>% 
+#  group_by(strand) %>% 
+#  bed_merge()
 
+masked_out <- mutate(masked_ivls,
+                     score = 0,
+                     name = ".") %>% 
+  ungroup() %>% 
+  dplyr::select(chrom,
+                start, 
+                end, 
+                name,
+                score,
+                strand) %>% 
+  bed_sort() %>% 
+  mutate_if(is.numeric, format, scientific = F)  %>% 
+  mutate_all(str_trim)
+
+write_tsv(masked_out, "fly_intron_mask.bed", col_names = F)
+```
+
+Make another mask the exclude exonic sequence, with some padding. 
+
+```{r}
+exons <- filter(gtf_df, type == "exon") %>%  
+  dplyr::select(chrom,
+                start, 
+                end, 
+                transcript_id,
+                exon_number,
+                strand) %>% 
+  bed_sort() %>% 
+  group_by(strand)
+
+intron_coverage <- bed_subtract(ivl_df, exons) %>% 
+   filter(score > 0) %>% 
+  dplyr::select(-score)
+
+exon_mask <- filter(exons, end - start > 200) %>% 
+  bed_slop(both = -75, genome = chrom_sizes) %>% 
+  dplyr::select(chrom:end, strand)
+
+
+intron_coverage <- bind_rows(intron_coverage, 
+                             exon_mask)
+
+masked_ivls <-group_by(intron_coverage, strand) %>% 
+  bed_merge() %>% 
+  ungroup()
+
+
+masked_out <- mutate(masked_ivls,
+                     score = 0,
+                     name = ".") %>% 
+  ungroup() %>% 
+  dplyr::select(chrom,
+                start, 
+                end, 
+                name,
+                score,
+                strand) %>% 
+  bed_sort() %>% 
+  mutate_if(is.numeric, format, scientific = F)  %>% 
+  mutate_all(str_trim)
+
+write_tsv(masked_out, "fly_exon_intron_plus_exons_juncts_mask.bed", col_names = F)
+```
+
+```{r}
 introns <- filter(gtf_df, type == "transcript") %>% 
-  select(chrom, start, end, gene_name, strand) %>% 
+  dplyr::select(chrom, start, end, gene_name, strand) %>% 
   unique() %>% 
   group_by(strand) %>% 
   bed_subtract(exons) %>% 
@@ -125,7 +198,7 @@ introns <- filter(gtf_df, type == "transcript") %>%
 
 introns_out <- introns %>% 
   mutate(score = 0L) %>% 
-  select(chrom, start, end, gene_name, score, strand) %>% 
+  dplyr::select(chrom, start, end, gene_name, score, strand) %>% 
   mutate_if(is.numeric, format, scientific = F) %>% 
   mutate_all(str_trim)
 
