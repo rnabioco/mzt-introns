@@ -95,5 +95,7 @@ db_out <- mutate(db_out,
   mutate_if(is.numeric, format, scientific = F)  %>% 
   mutate_all(str_trim)
 
+# only masked pre_mRNA annotations
+db_out <- filter(db_out, str_detect(chrom, "^pre_"))
 write_tsv(db_out, "fly_intron_mask_plus_exon_txcoords.bed", col_names = F)
 ```

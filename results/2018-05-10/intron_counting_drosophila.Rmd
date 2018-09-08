@@ -150,7 +150,9 @@ exons <- filter(gtf_df, type == "exon") %>%
                 transcript_id,
                 exon_number,
                 strand) %>% 
-  bed_sort() %>% 
+  bed_sort() %>%
+  group_by(strand) %>% 
+  bed_merge() %>% 
   group_by(strand)
 
 intron_coverage <- bed_subtract(ivl_df, exons) %>% 

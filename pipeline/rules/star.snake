@@ -76,8 +76,8 @@ rule star_align:
         --readFilesIn {params.io}  \
         --readFilesCommand gunzip -c \
         --outFileNamePrefix {params.out} \
-        --outFilterMultimapNmax 10 --outFilterMismatchNmax 10 --outFilterMismatchNoverReadLmax 0.04 \
-        --outSAMmultNmax 1 --outMultimapperOrder Random  --outSAMprimaryFlag AllBestScore \
+        --outFilterMultimapNmax 20 --outFilterMismatchNmax 10 --outFilterMismatchNoverReadLmax 0.04 \
+        --outSAMmultNmax 20 --outMultimapperOrder Random  --outSAMprimaryFlag AllBestScore \
         --alignIntronMin 20 --alignIntronMax 1000000 --alignMatesGapMax 1000000 \
         --alignSJoverhangMin 8  --alignSJDBoverhangMin 1 --sjdbScore 1 \
         --outReadsUnmapped Fastx --outFilterType BySJout \

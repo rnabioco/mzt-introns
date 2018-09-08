@@ -26,6 +26,7 @@ module load fastqc/0.11.5
 module load samtools/1.5
 module load STAR/2.5.2a
 module load subread/1.6.2
+module load bowtie2/2.3.2
 
 # other programs (not in modules)
 # Salmon-0.8.2
@@ -36,8 +37,8 @@ module load subread/1.6.2
 
 snakemake --drmaa "$args" \
     --snakefile Snakefile \
-    --jobs 48 \
-    --resources all_threads=48 \
+    --jobs 150 \
+    --resources all_threads=150 \
     --latency-wait 50 \
     --rerun-incomplete  \
     --configfile config.yaml  

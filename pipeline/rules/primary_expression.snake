@@ -71,7 +71,7 @@ rule salmon_idx:
       job_name = "salmon_idx",
       memory = "select[mem>50] rusage[mem=50]",
     log:
-      path.join(DBASES, "logs", "generate_primary_transcript_salmon_index.txt")
+      path.join(DBASES, "logs", "{species}", "generate_primary_transcript_salmon_index.txt")
     threads: 12
     resources: all_threads=12
     shell:
@@ -118,30 +118,94 @@ rule salmon_primary:
         --numBootstraps 50 \
         -g {input.gtf} 
       """
-rule primary_transcript_gtf:
+
+rule salmon_masked_idx:
     """
-    Append primary transcript records to GTF annotations
-    src/add_primary_transcripts.py
-    and extract out transcript.fa
+    build salmon on pre-mRNA fasta
+    Salmon v0.9.1
     """
     input:
-      lambda wildcards: TRANSCRIPTS[wildcards.species]
+      fasta = path.join(DBASES, "{species}",  "{fasta}.fa"),
     output:
-      gtf = path.join(DBASES, "{species}", "primary_transcripts.gtf"), 
-      fa = path.join(DBASES, "{species}" ,"primary_transcripts.fa") 
+      path.join(DBASES, "{species}", "salmon", "{fasta}", "hash.bin")
     params:
-      genome = lambda wildcards: GENOMES[wildcards.species],
-      job_name = "gen_primary_txs",
-      memory = "select[mem>4] rusage[mem=4]",
+      outname = path.join(DBASES, "{species}", "salmon", "{fasta}"),
+      idx_settings = lambda wildcards: SALMON_K[wildcards.species],
+      job_name = "salmon_idx",
+      memory = "select[mem>50] rusage[mem=50]",
     log:
-      path.join(DBASES, "logs", "{species}", "generate_primary_transcript_db.txt")
-    resources: all_threads=1
+      path.join(DBASES, "logs", "{species}", "generate_primary_transcript_" + "{fasta}.txt")
+    threads: 12
+    resources: all_threads=12
     shell:
       """
-      python3 {SRC}/add_primary_transcripts.py \
-        -i {input} \
-        -r "gene" \
-        -a "gene_id" > {output.gtf}
-
-      gffread -w {output.fa} -g {params.genome} {output.gtf}
+      salmon index \
+        -p {threads} \
+        -t {input.fasta} \
+        --type "quasi" \
+        -k {params.idx_settings} \
+        -i {params.outname}
       """
+
+rule salmon_primary_masked:
+    """
+    run salmon on pre-mRNA indexes
+    Salmon v0.9.1
+    """
+    input:
+      idx = path.join(DBASES, "{species}", "salmon", "{fasta}", "hash.bin"),
+      R1 = _fq_types,
+      gtf = path.join(DBASES, "{species}", "primary_transcripts.gtf")
+    output:
+      path.join("{data}", "salmon", "{species}", "{expt}", "{fasta}", "{sample}", "quant.sf")
+    params:
+      io = _input_options,
+      settings = _map_settings,
+      idx = path.join(DBASES, "{species}", "salmon", "{fasta}"),
+      out_dir = path.join("{data}", "salmon", "{species}", "{expt}", "{fasta}", "{sample}"),
+      job_name = "salmon_fishin",
+      memory = "select[mem>30] rusage[mem=30]",
+    log:
+      path.join("{data}", "salmon", "logs", "{species}", "{expt}", "{sample}")
+    threads: 12
+    resources: all_threads=12
+    shell:
+      """
+      salmon quant \
+        -i {params.idx} \
+        {params.settings} \
+        {params.io} \
+        -o {params.out_dir} \
+        -p {threads} \
+        --numBootstraps 50 \
+        --validateMappings \
+        -g {input.gtf} 
+      """
+
+#rule primary_transcript_gtf:
+#    """
+#    Append primary transcript records to GTF annotations
+#    src/add_primary_transcripts.py
+#    and extract out transcript.fa
+#    """
+#    input:
+#      lambda wildcards: TRANSCRIPTS[wildcards.species]
+#    output:
+#      gtf = path.join(DBASES, "{species}", "primary_transcripts.gtf"), 
+#      fa = path.join(DBASES, "{species}" ,"primary_transcripts.fa") 
+#    params:
+#      genome = lambda wildcards: GENOMES[wildcards.species],
+#      job_name = "gen_primary_txs",
+#      memory = "select[mem>4] rusage[mem=4]",
+#    log:
+#      path.join(DBASES, "logs", "{species}", "generate_primary_transcript_db.txt")
+#    resources: all_threads=1
+#    shell:
+#      """
+#      python3 {SRC}/add_primary_transcripts.py \
+#        -i {input} \
+#        -r "gene" \
+#        -a "gene_id" > {output.gtf}
+#
+#      gffread -w {output.fa} -g {params.genome} {output.gtf}
+#      """
