@@ -1,0 +1,1345 @@
+---
+title: "Benchmarking approaches"
+author: "Kent Riemondy RBI"
+date: '`r Sys.Date()`'
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+## Background
+
+Goal is to compare different methods for quantifing intronic abundance. 
+
+1) Naive unique mapping reads in introns versus exons
+2) Salmon spiked in with pre-mRNA annotaitons
+3) Salmon spiked in with pre-mRNA annotations, with regions with coverage in the t = 0 
+stages masked in the pre-mRNA annotations. Masking converts all sequences to Ns
+4) Salmon spiked in with pre-mRNA annotations, with regions with coverage in the t = 0 
+stages masked in the pre-mRNA annotations. Additionally mask internal exonic sequences to avoid extensive sequence overlap with the spliced mRNA transcript. Masking converts all sequences to Ns
+5) Use bowtie2 for alignment then quantify with salmon, using the annotaitons from 3.
+6) Use bowtie2 for alignment then quantify with salmon, using the annotaitons from 4.
+
+The masking process converts many nucleotides to N which could be problematic for salmon. When building the transcript index, `salmon` will by default insert pseudo-random nucleotides for the N's. The impact of this is unknown and could be problematic. 
+
+To potentially mitigate mismapping artifacts, bowtie2 will be used to map the transcriptome. It will not replace the N's. Salmon can then be run on the alignments to perform quantification.
+
+To establish the best approach the following analyses will be performed:
+
+1) Examine global pre-mRNA dynamics during development.
+
+```{r load_libs}
+source("../../R/globals.r")
+```
+
+## get metadata
+
+```{r get_metadata}
+
+mdata1 <- read_tsv(file.path(data_dir,
+                             "raw_data",
+                             "drosophila",
+                             "EICHHORN",
+                             "GSE83616_run_info_geo.txt"))
+mdata2 <- read_tsv(file.path(data_dir,
+                             "raw_data",
+                             "drosophila",
+                             "RISSLAND",
+                             "GSE98106_run_info_geo.txt"))
+
+#simplify mdata
+mdata1 <- dplyr::select(mdata1,
+                       Run_s, 
+                       developmental_stage_s,
+                       genotype_s,
+                       source_name_s,
+                       Assay_Type_s)
+
+#simplify mdata
+mdata2 <- dplyr::select(mdata2,
+                       Run_s, 
+                       developmental_stage_s,
+                       rip_antibody_s,
+                       source_name_s,
+                       strain_s)
+
+# select relevant libs
+mdata2 <- dplyr::filter(mdata2,
+                     source_name_s == "Embryo",
+                     strain_s %in% c("w1118", "eGFP-ME31B"),
+                     rip_antibody_s == "none") %>% 
+  dplyr::select(-rip_antibody_s)
+
+mdata1 <- dplyr::filter(mdata1,
+                     genotype_s == "wt",
+                     Assay_Type_s == "RNA-Seq") %>% 
+  dplyr::select(-Assay_Type_s) %>% 
+  dplyr::rename(strain_s = genotype_s)
+
+
+mdata <- list(mdata1, mdata2)
+names(mdata) <- c("EICHHORN", "RISSLAND")
+
+mdata <- bind_rows(mdata, .id = "study")
+#cleanup names
+mdata <- mdata %>% 
+  mutate(source_name_s = ifelse(source_name_s == "embryos", 
+                                "Embryo",
+                                source_name_s),
+         developmental_stage_s = str_replace(developmental_stage_s,
+                                             " h ",
+                                             " hr "))
+
+# cleanup colnames
+colnames(mdata) <- str_replace(colnames(mdata),
+                               "_s$",
+                               "")
+
+mdata
+```
+
+## Get transcript annotations
+```{r check_monoexonic}
+gtf <- "~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
+gtf <- import(gtf)
+gtf <- as.data.frame(gtf)
+
+gtf_summary <- dplyr::filter(gtf, type == "exon") %>% 
+  dplyr::select(seqnames, start, end, strand, gene_id) %>% 
+  dplyr::rename(chrom = seqnames) %>% 
+  unique() %>% 
+  group_by(gene_id) %>% 
+  bed_merge() %>% 
+  dplyr::summarize(total_exons = n())
+
+monoexonic_genes <- dplyr::filter(gtf_summary, total_exons == 1) %>%
+  pull(gene_id)
+```
+
+
+## Load in naive method featurecounts data
+
+```{r load_dat, message = F}
+count_data_dir <- file.path(data_dir, 
+                            "featurecounts",
+                            "drosophila")
+
+count_files <- dir(count_data_dir,
+                   pattern = "_counts.tsv$",
+                   recursive = T,
+                   full.names = T)
+
+sample_names <- str_split(count_files, "\\/") %>% 
+  map_chr(., ~.x[10]) %>% 
+  str_replace(., "_counts.tsv", "") 
+
+sample_names_simple <- str_replace(sample_names, "_exon|_intron", "")
+ 
+dat <- map(count_files, 
+           ~read_tsv(.x,
+                     skip = 2,  
+                     col_names = F) %>% 
+             select(gene_id = X1, 
+                    length = X6, 
+                    counts = X7))
+             
+# name with libraryID
+names(dat) <- sample_names
+
+dat <- bind_rows(dat, .id = "sample_name")
+
+dat <- mutate(dat, 
+              Run = str_replace(sample_name, 
+                                             "_exon|_intron", 
+                                             ""),
+              count_type = ifelse(str_detect(sample_name, "exon"),
+                                  "exon",
+                                  "intron"))
+#join with main data
+dat <- inner_join(dat, 
+                  mdata,
+                  by = c("Run"))
+
+dat <- anti_join(dat, 
+                 data_frame(gene_id = monoexonic_genes),
+                 by = "gene_id")
+
+fcount_dat <- group_by(dat, Run) %>% 
+  mutate(lib_size = sum(counts),
+         eff_length = as.numeric(length) - 150 + 1) %>% 
+  filter(eff_length > 0 ) %>% 
+  mutate(rate = log(counts) - log(eff_length),
+         total_rates = log(sum(exp(rate))),
+         TPM = exp(rate - total_rates + log(1e6)))
+
+fcount_dat$expt <- "featureCounts"
+```
+
+## salmon data 
+```{r read_in_salmon}
+
+fa_types <- c(
+  "primary_transcripts",
+  "primary_transcripts_masked",
+  "primary_transcripts_masked_exons"
+)
+
+files <- map(fa_types, 
+                 ~file.path(data_dir,
+                   "salmon", 
+                   "drosophila",
+                   mdata$study,
+                   .x,
+                   mdata$Run,
+                   "quant.sf"))
+
+dat <- map(files, ~map(.x, read_tsv))
+names(dat) <- fa_types
+
+dat <- map(dat, function(x) {
+  names(x) <- mdata$Run
+  x
+} )
+
+dat <- map(dat, ~bind_rows(.x, .id = "Run"))
+
+dat <- bind_rows(dat, .id = "expt")
+
+#join with main data
+dat <- inner_join(dat, 
+                 mdata,
+                by = c("Run"))
+
+dat <- anti_join(dat, 
+                 data_frame(gene_id = monoexonic_genes),
+                 by = c("Name" = "gene_id"))
+
+# classify transcripts as primary or mature
+dat <- dat %>% 
+  mutate(count_type = ifelse(str_detect(Name, 
+                                        "^pre_"), 
+                             "intron", 
+                             "exon"))
+
+# drop unneeded data
+dat <- dplyr::select(dat,
+                     -c(Length:EffectiveLength, 
+                        NumReads))
+
+gene2tx <- gtf[, c("gene_id", "transcript_id")]
+gene2tx <- unique(gene2tx)
+gene2tx <- na.omit(gene2tx)
+
+# add in geneid attribute
+dat <- left_join(dat, gene2tx, 
+                 by = c("Name" = "transcript_id")) %>% 
+  dplyr::rename(transcript_id = Name)
+
+# add geneid attribute for pre_ annotations
+salmon_dat <- mutate(dat, 
+              gene_id = ifelse(count_type == "intron",
+                               str_replace(transcript_id, "^pre_", ""),
+                               gene_id))
+```
+## bowtie2 data
+```{r read_in_bt2_salmon}
+
+fa_types <- c(
+  "primary_transcripts_masked",
+  "primary_transcripts_masked_exons"
+)
+
+files <- map(fa_types, 
+                 ~file.path(data_dir,
+                   "salmon_bt2_masked", 
+                   "drosophila",
+                   mdata$study,
+                   .x,
+                   mdata$Run,
+                   "quant.sf"))
+
+dat <- map(files, ~map(.x, read_tsv))
+names(dat) <- fa_types
+
+dat <- map(dat, function(x) {
+  names(x) <- mdata$Run
+  x
+} )
+
+dat <- map(dat, ~bind_rows(.x, .id = "Run"))
+
+dat <- bind_rows(dat, .id = "expt")
+
+#join with main data
+dat <- inner_join(dat, 
+                 mdata,
+                by = c("Run"))
+
+dat <- anti_join(dat, 
+                 data_frame(gene_id = monoexonic_genes),
+                 by = c("Name" = "gene_id"))
+
+# classify transcripts as primary or mature
+dat <- dat %>% 
+  mutate(count_type = ifelse(str_detect(Name, 
+                                        "^pre_"), 
+                             "intron", 
+                             "exon"))
+
+# drop unneeded data
+dat <- dplyr::select(dat,
+                     -c(Length:EffectiveLength, 
+                        NumReads))
+
+gene2tx <- gtf[, c("gene_id", "transcript_id")]
+gene2tx <- unique(gene2tx)
+gene2tx <- na.omit(gene2tx)
+
+# add in geneid attribute
+dat <- left_join(dat, gene2tx, 
+                 by = c("Name" = "transcript_id")) %>% 
+  dplyr::rename(transcript_id = Name)
+
+# add geneid attribute for pre_ annotations
+bt2_dat <- mutate(dat, 
+              gene_id = ifelse(count_type == "intron",
+                               str_replace(transcript_id, "^pre_", ""),
+                               gene_id))
+
+# append bt2 to expt to distinguish
+bt2_dat$expt <- str_c("bt2_", bt2_dat$expt)
+```
+## combine all expts
+```{r}
+keep_cols <- intersect(colnames(salmon_dat), colnames(fcount_dat))
+
+fcount_dat <- fcount_dat[, keep_cols]
+salmon_dat <- salmon_dat[, keep_cols]
+bt2_dat <- bt2_dat[, keep_cols]
+dat <- bind_rows(list(salmon_dat, fcount_dat, bt2_dat))
+```
+
+## plot pre_mRNA ratios
+
+```{r, calc_premRNA}
+# sum primary and mature TPMs for each gene 
+summary_dat <- dplyr::select(dat, 
+                             expt,
+                             TPM, 
+                             gene_id, 
+              Run, 
+              count_type, 
+              developmental_stage,
+              study, 
+              strain) %>% 
+  group_by(expt,
+           gene_id, 
+           Run, 
+           developmental_stage, 
+           count_type,
+           strain) %>% 
+  dplyr::summarize(total_tpm = sum(TPM, na.rm = F)) %>% 
+  ungroup() 
+
+## calc primary ratio
+tpm_summary <- summary_dat %>% 
+  spread(count_type, total_tpm, fill = 0) %>% 
+  mutate(primary_ratio  = intron / (intron + exon))
+
+
+## calc mean primary ratio
+tpm_means <- tpm_summary %>%  
+  filter(!is.na(primary_ratio)) %>% 
+  group_by(expt,
+           gene_id, 
+           developmental_stage,
+           strain) %>% 
+  summarize(mean_primary = mean(primary_ratio,
+                                na.rm = T)) 
+  
+tpm_means <- ungroup(tpm_means)
+
+tpm_means <- mutate(tpm_means, 
+                       developmental_stage = factor(developmental_stage, 
+                                         levels = c(
+                                           "Stage 11 oocyte",
+                                           "Stage 12 oocyte",
+                                           "Stage 13 oocyte",
+                                           "Stage 14 oocyte",
+                                           "Activated egg",
+                                           "0-1 hr embryo",
+                                           "1-2 hr embryo",
+                                           "2-3 hr embryo",
+                                           "3-4 hr embryo",
+                                           "4-5 hr embryo",
+                                           "5-6 hr embryo")
+                                         )
+                       )
+
+tpm_means <- mutate(tpm_means,
+                       strain = ifelse(strain == "wt",
+                                       paste(strain, 
+                                             "(Eichhorn)"),
+                                       paste(strain,
+                                             "(Rissland)")))
+                                        
+```
+
+```{r plt_it}
+
+plt_dat <- split(tpm_means, tpm_means$expt)
+
+plts <- imap(plt_dat, 
+  ~ggplot(.x, 
+       aes(developmental_stage, mean_primary)) +
+  geom_boxplot(aes(fill = developmental_stage), coef = 1) + 
+  facet_grid(~strain, 
+             scale = "free") +
+  labs(x = "",
+       y = expression(frac("pre-mRNA TPM", 
+                           "mature + pre-mRNA TPM")),
+       title = .y) +
+  scale_fill_brewer(palette = "Paired",
+                    name = "Transcript Type",
+                    breaks = c("pre", "mature"),
+                    labels = c("pre-mRNA", "mature-mRNA")) +
+  theme(
+    axis.text.x = element_text(angle = 90,
+                               vjust = 0.5,
+                               hjust = 0.5),
+    strip.text = element_text(size = 8)
+  )
+)
+
+plt <- plot_grid(plotlist = plts)
+plt
+
+save_plot("exon_intron_boxplt-pre-mRNA-ratios.pdf", 
+          plt, 
+          base_width = 6,
+          base_height = 4.5,
+          nrow = 3,
+          ncol = 3)
+
+```
+
+## Classify transcripts into maternal or zygotic
+
+Next I'll try to classify transcripts into catagories based upon their abundance changes throughout embryogenesis. 
+
+```{r}
+count_dat <- map(count_files, 
+                  ~read_tsv(
+                    .x, 
+                    skip = 2, 
+                    col_names = F) %>% 
+                   dplyr::select(X1, X7))
+count_dat <- map2(count_dat, sample_names, function(x, y){
+  colnames(x) <- c("gene_id", y)
+  x
+})
+
+count_mat <- Reduce(function(x, y) {
+  inner_join(x, y, by = "gene_id")}, 
+  count_dat)
+
+exon_mat <- dplyr::select(count_mat, 
+                          gene_id, 
+                          contains("_exon")) %>% 
+  as.data.frame() %>% 
+  tibble::column_to_rownames("gene_id")
+
+intron_mat <- dplyr::select(count_mat, 
+                            gene_id, 
+                            contains("_intron")) %>% 
+  as.data.frame() %>% 
+  tibble::column_to_rownames("gene_id")
+
+# make metadata sample ordered by columns in count matrix
+pdata <- inner_join(data_frame(Run = str_replace(colnames(exon_mat), "_exon", "")),
+           mdata, by = "Run")
+
+pdata <- mutate(pdata, 
+                mzt = ifelse(str_detect(developmental_stage,
+                                        "^[2345]-[3456] hr embryo"),
+                             "zygotic",
+                             "maternal"),
+                strain_id = str_replace(strain, "-", "_"))
+
+#pdata <- filter(pdata, 
+#                study == "RISSLAND")
+exon_mat <- exon_mat[, str_c(pdata$Run, "_exon")]
+intron_mat <- intron_mat[, str_c(pdata$Run, "_intron")]
+```
+
+
+```{r deseq2}
+
+dds <- DESeqDataSetFromMatrix(exon_mat, pdata, ~mzt + strain_id)
+dds <- dds[ rowSums(counts(dds) > 1) >= as.integer(ncol(counts(dds)) * 0.50)] 
+dds_mature <- DESeq(dds)
+res_mature <- results(dds_mature, name = "mzt_zygotic_vs_maternal")
+res_mature_tidy <- results(dds_mature, name = "mzt_zygotic_vs_maternal", tidy = TRUE)
+
+dds <- DESeqDataSetFromMatrix(intron_mat, pdata, ~mzt)
+dds <- dds[ rowSums(counts(dds) > 1) >= as.integer(ncol(counts(dds)) * 0.50), ] 
+sizeFactors(dds) <- unname(sizeFactors(dds_mature))
+dds_pre <- estimateDispersions(dds)
+dds_pre <- nbinomWaldTest(dds_pre)
+res_pre <- results(dds_pre, name = "mzt_zygotic_vs_maternal")
+res_pre_tidy <- results(dds_pre, name = "mzt_zygotic_vs_maternal", tidy = TRUE)
+```
+
+```{r}
+pre_plot_dat <- res_pre_tidy %>% 
+  as_tibble() %>% 
+  mutate(sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.05 & log2FoldChange < 0,
+                             "Down", "Not Sig")))
+
+pre_plot_dat <-  pre_plot_dat %>% filter(!is.na(sig))
+
+n_sig_up <- nrow(dplyr::filter(pre_plot_dat, sig == "Up")) %>% 
+  formatC(big.mark = ",")
+n_sig_down <- nrow(dplyr::filter(pre_plot_dat, sig == "Down"))  %>% 
+  formatC(big.mark = ",")
+n_notsig <- nrow(dplyr::filter(pre_plot_dat, sig == "Not Sig"))  %>% 
+  formatC(big.mark = ",")
+
+pre_plot <- ggplot(pre_plot_dat, 
+       aes(baseMean, log2FoldChange)) +
+  geom_point(aes(colour = sig), size = 0.1) +
+  scale_colour_viridis(discrete = TRUE,
+                       name = "",
+                       labels = c(paste0("Significantly decreased (n = ", n_sig_down, ")"),
+                                  paste0("Not Significant (n= ", n_notsig, ")"),
+                                  paste0("Significantly increased (n = ", n_sig_up, ")"))) +
+  scale_x_log10() + 
+  labs(x = expression(paste("log"[10], " Average Expression")),
+       y = expression(paste("log"[2], " ", frac("Zygotic", "Maternal"))),
+       title = "pre-mRNA") +
+  guides(colour = guide_legend(nrow = 3,
+                               override.aes = list(size = 3))) +
+  theme(legend.position = "top")
+  
+pre_plot
+
+
+mature_plot_dat <- res_mature_tidy %>% 
+  as_tibble() %>% 
+  mutate(sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.05 & log2FoldChange < 0, "Down", "Not Sig")))
+mature_plot_dat <-  mature_plot_dat %>% filter(!is.na(sig))
+
+n_sig_up <- nrow(dplyr::filter(mature_plot_dat, sig == "Up")) %>% 
+  formatC(big.mark = ",")
+n_sig_down <- nrow(dplyr::filter(mature_plot_dat, sig == "Down"))  %>% 
+  formatC(big.mark = ",")
+n_notsig <- nrow(dplyr::filter(mature_plot_dat, sig == "Not Sig"))  %>% 
+  formatC(big.mark = ",")
+
+ 
+mat_plot <- ggplot(mature_plot_dat, 
+       aes(baseMean, log2FoldChange)) +
+  geom_point(aes(colour = sig), size = 0.1) +
+  scale_colour_viridis(discrete = TRUE,
+                       name = "",
+                       labels = c(paste0("Significantly decreased (n = ", n_sig_down, ")"),
+                                  paste0("Not Significant (n= ", n_notsig, ")"),
+                                  paste0("Significantly increased (n = ", n_sig_up, ")"))) +
+  scale_x_log10() + 
+  labs(x = expression(paste("log"[10], " Average Expression")),
+       y = expression(paste("log"[2], " ", frac("Zygotic", "Maternal"))),
+       title = "mature-mRNA") +
+  guides(colour = guide_legend(nrow = 3, 
+                               override.aes = list(size = 3))) +
+  theme(legend.position = "top")
+  
+exon_intron_maplt <- plot_grid(pre_plot, mat_plot, nrow = 1)
+save_plot("exon_intron_deseq_pre_mat_results.pdf", exon_intron_maplt, nrow = 1, ncol = 2)
+```
+
+
+```{r outtbls}
+
+gene2name <- dplyr::select(gtf, gene_id, gene_name) %>% unique()
+
+res_mature_tidy_simple <- left_join(res_mature_tidy, 
+                             gene2name, 
+                             by = c("row" = "gene_id")) %>% 
+  dplyr::select(gene_name, gene_id = row, baseMean:log2FoldChange, padj)
+
+res_pre_tidy_simple <- left_join(res_pre_tidy, 
+                             gene2name, 
+                             by = c("row" = "gene_id")) %>% 
+  dplyr::select(gene_name, gene_id = row, baseMean:log2FoldChange, padj)
+
+all_gene_measurements <- full_join(res_pre_tidy_simple, res_mature_tidy_simple,
+                                   by = c("gene_id", "gene_name"), 
+                                   suffix = c("_pre-mRNA", "_mature-mRNA"))
+
+```
+
+
+## Compare to SNP data called by Michael Eisen's group
+
+```{r classify_txs, eval = T}
+
+detected_genes <- all_gene_measurements %>% 
+  filter(!is.na(`padj_mature-mRNA`))
+
+mature_counts <- exon_mat
+
+col_info <- colData(dds_mature) %>% 
+  as_data_frame() %>% 
+  mutate(id = str_c(developmental_stage, "::", strain)) %>% 
+  mutate(stage_classifier = ifelse(str_detect(developmental_stage, "oocyte|egg"),
+                                   "oocyte",
+                                   "zygote"))
+
+colnames(mature_counts) <- col_info$id
+
+maternal_samples <- filter(col_info, stage_classifier == "oocyte") %>% pull("id")
+zygotic_sammples <- filter(col_info, mzt == "zygotic") %>% pull("id")
+
+## select transcripts with at least 10 reads from 3 or more maternal samples (only egg or oocyte)
+maternally_expressed <- rowSums(mature_counts[, maternal_samples] > 10) > 2
+maternally_expressed <- mature_counts[maternally_expressed, maternal_samples]
+
+## find zygotically transcribed transcripts (up in either pre or mature mRNA)
+zygotically_transcribed <- filter(detected_genes,
+                                  (`padj_pre-mRNA` < 0.05 & detected_genes$`log2FoldChange_pre-mRNA` > 0)) 
+#                                  (`padj_mature-mRNA` < 0.05 & #detected_genes$`log2FoldChange_mature-mRNA` > 0))
+
+maternal_and_zygotic <- intersect(rownames(maternally_expressed), 
+                                  zygotically_transcribed$gene_id)
+
+zygotic_only <- setdiff(zygotically_transcribed$gene_id,
+                        rownames(maternally_expressed))
+                        
+maternal_only <- setdiff(rownames(maternally_expressed),
+                         zygotically_transcribed$gene_id)
+
+classifications <- lst(maternal_only,
+      zygotic_only,
+      maternal_and_zygotic)
+
+
+lens <- map_int(classifications, length)
+
+data_frame(type = names(classifications),
+           n_genes = lens)
+
+# Note that monoexonic genes must have increased mature mRNA levels in zygotes to be called zygotic.
+classifications <- bind_rows(map(classifications, ~data_frame(gene_id = .x)), .id = "type")
+
+detected_genes <- left_join(detected_genes, 
+                            classifications,
+                            by = "gene_id")
+```
+
+"Overall, 5,598 genes were classified as maternal, 2,210 as zygotic, and 1,195 and maternal+zygotic (the classification for each gene is listed in Dataset S1)."
+
+```{r}
+edata <- read_tsv("https://ndownloader.figshare.com/files/400050")
+
+res_eisen <- edata %>% 
+  dplyr::select(NAME, CLASS) %>% 
+  left_join(detected_genes, ., 
+            by = c("gene_id" = "NAME")) %>% 
+  dplyr::rename(kr_class = type,
+                eisen_class = CLASS)
+
+summary_dat <- res_eisen %>% 
+ group_by(kr_class, eisen_class) %>% 
+ summarize(n())
+
+summary_dat 
+
+res_eisen <- res_eisen %>% 
+  mutate(eisen_class = ifelse(is.na(eisen_class),
+                              "not classified",
+                              eisen_class),
+         kr_class = ifelse(is.na(kr_class),
+                                 "not classified",
+                                 kr_class),
+         kr_class = factor(kr_class,
+                           levels = c(
+                             "maternal_only",
+                             "maternal_and_zygotic",
+                             "zygotic_only",
+                             "not classified"
+                           )))
+
+
+plt <- ggplot(res_eisen, aes(kr_class)) +
+  geom_bar(aes(fill = eisen_class)) +
+  labs(y = "# of genes", x = "intron based classification") +
+  scale_fill_brewer(palette = "Set1", 
+                    name = "SNP based\nclassification\n(Lott et al 2011)") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+plt
+
+save_plot("eisen_vs_intron_classification.pdf", plt)
+write_tsv(res_eisen, "eisen_vs_intron_classification.tsv")
+res_eisen <- read_tsv("eisen_vs_intron_classification.tsv")
+```
+
+# Load in salmon data
+
+```{r load_dat, message = F}
+files <- dir(file.path(data_dir, "salmon", "drosophila"),
+            recursive = T,
+            pattern = "*quant.sf",
+            full.names = T)
+
+dat <- map(files, read_tsv)
+
+# name with libraryID
+names(dat) <- dirname(files) %>% 
+  str_split(., "[/]", simplify = T) %>% 
+  .[, 10]
+
+dat <- bind_rows(dat, .id = "libraryID")
+
+#join with main data
+dat <- inner_join(dat, 
+                  mdata,
+                  by = c("libraryID" = "Run"))
+```
+
+```{r}
+
+dat <- anti_join(dat, 
+                 data_frame(gene_id = monoexonic_genes),
+                 by = c("Name" = "gene_id"))
+
+# classify transcripts as primary or mature
+dat %>% 
+  mutate(type = ifelse(str_detect(Name, 
+                                  "^pre_"), 
+                       "pre", "mature")) -> dat
+
+# drop unneeded data
+dat <- dplyr::select(dat,
+                     -c(Length:EffectiveLength, 
+                        NumReads))
+
+gene2tx <- gtf[, c("gene_id", "transcript_id")]
+gene2tx <- unique(gene2tx)
+gene2tx <- na.omit(gene2tx)
+
+# add in geneid attribute
+dat <- left_join(dat, gene2tx, by = c("Name" = "transcript_id")) %>% 
+  dplyr::rename(transcript_id = Name)
+
+# add geneid attribute for pre_ annotations
+dat <- mutate(dat, 
+              gene_id = ifelse(type == "pre",
+                               str_replace(transcript_id, "^pre_", ""),
+                               gene_id))
+
+dat <- mutate(dat,
+              monoexonic = gene_id %in% monoexonic_genes)
+
+# sum primary and mature TPMs for each gene 
+summary_dat <- dplyr::select(dat, TPM, gene_id, 
+              libraryID, type, developmental_stage,
+              study, strain) %>% 
+  group_by(gene_id, libraryID, 
+           developmental_stage, type,
+           strain) %>% 
+  dplyr::summarize(total_tpm = sum(TPM, na.rm = F)) %>% 
+  ungroup() 
+
+## calc primary ratio
+tpm_summary <- summary_dat %>% 
+  spread(type, total_tpm) %>% 
+  mutate(primary_ratio  = pre / (mature + pre))
+
+
+## calc mean primary ratio
+tpm_means <- tpm_summary %>% 
+  group_by(gene_id, 
+           developmental_stage,
+           strain) %>% 
+  summarize(mean_primary = mean(primary_ratio,
+                                na.rm = T)) 
+
+tpm_means <- mutate(tpm_means, 
+                       stage = factor(developmental_stage, 
+                                         levels = c(
+                                           "Stage 11 oocyte",
+                                           "Stage 12 oocyte",
+                                           "Stage 13 oocyte",
+                                           "Stage 14 oocyte",
+                                           "Activated egg",
+                                           "0-1 hr embryo",
+                                           "1-2 hr embryo",
+                                           "2-3 hr embryo",
+                                           "3-4 hr embryo",
+                                           "4-5 hr embryo",
+                                           "5-6 hr embryo")
+                                         )
+                       )
+
+tpm_means <- mutate(tpm_means,
+                       strain = ifelse(strain == "wt",
+                                       paste(strain, 
+                                             "(Eichhorn)"),
+                                       paste(strain,
+                                             "(Rissland)")))
+                                        
+tpm_means %>% 
+  group_by(gene_id, developmental_stage) %>% 
+  summarize(mean_primary = mean(mean_primary, na.rm = T)) %>% 
+  mutate(strain = "all strains") %>% 
+  bind_rows(tpm_means, .) %>% 
+  arrange(gene_id) %>% 
+  ungroup() -> all_combined
+
+ggplot(all_combined, 
+       aes(developmental_stage, mean_primary)) +
+  geom_boxplot(aes(fill = developmental_stage), coef = 1e3) + 
+  facet_grid(~strain, scale = "free") +
+  labs(x = "",
+       y = expression(frac("pre-mRNA TPM", 
+                           "mature + pre-mRNA TPM"))) +
+  scale_fill_brewer(palette = "Set1",
+                    name = "Transcript Type",
+                    breaks = c("pre", "mature"),
+                    labels = c("pre-mRNA", "mature-mRNA")) +
+  theme(
+    axis.text.x = element_text(angle = 90,
+                               vjust = 0.5,
+                               hjust = 0.5)
+  )
+
+
+all_combined <- mutate(all_combined,
+                       developmental_stage = factor(developmental_stage,
+                                                    levels = c(
+                                                      "Stage 11 oocyte",
+                                                      "Stage 12 oocyte",
+                                                      "Stage 13 oocyte",
+                                                      "Stage 14 oocyte",
+                                                      "Activated egg",
+                                                      "0-1 hr embryo",
+                                                      "1-2 hr embryo",
+                                                      "2-3 hr embryo",
+                                                      "3-4 hr embryo",
+                                                      "4-5 hr embryo",
+                                                      "5-6 hr embryo")))
+
+
+salmon_boxplt <- ggplot(filter(all_combined, strain != "all strains"), 
+       aes(developmental_stage, mean_primary)) +
+  geom_boxplot(aes(fill = developmental_stage), coef = 1e3) + 
+  facet_grid(~strain, scale = "free") +
+  labs(x = "",
+       y = expression(frac("pre-mRNA TPM", 
+                           "mature + pre-mRNA TPM"))) +
+  scale_fill_brewer(palette = "Paired",
+                    name = "Transcript Type",
+                    breaks = c("pre", "mature"),
+                    labels = c("pre-mRNA", "mature-mRNA")) +
+  theme(
+    axis.text.x = element_text(angle = 90,
+                               vjust = 0.5,
+                               hjust = 0.5),
+    strip.text = element_text(size = 8)
+  )
+
+save_plot("salmon_boxplt-pre-mRNA-ratios.pdf", salmon_boxplt, base_width = 6, base_height = 4.5)
+```
+
+```{r, split_salmon}
+
+tx2gene_mapping <- dplyr::select(dat, 
+                         transcript_id, 
+                         gene_id) %>% 
+  unique() %>% 
+  as.data.frame()
+
+files <- dir(file.path(data_dir, "salmon"),
+            recursive = T,
+            pattern = "*quant.sf",
+            full.names = T)
+
+sra_ids <- dirname(files) %>% 
+  str_split(., "/", simplify = T) %>% 
+  .[, 10]
+
+keep <- sra_ids %in% mdata$Run
+files <- files[keep]
+sra_ids <- sra_ids[keep]
+
+all_dat <- map(files, read_tsv)
+
+all_pre <- map(all_dat, 
+                 ~dplyr::filter(.x,
+                                str_detect(Name, "^pre_")))
+
+all_mat <- map(all_dat, 
+               ~dplyr::filter(.x,
+                              !str_detect(Name, "^pre_")))
+
+dir.create("salmon_modified", recursive = T)
+
+walk2(all_pre,
+      sra_ids,
+      ~write_tsv(.x, file.path("salmon_modified", 
+                               paste0(.y, ".premRNA"))))
+walk2(all_mat,
+      sra_ids,
+      ~write_tsv(.x, file.path("salmon_modified", 
+                               paste0(.y, ".maturemRNA"))))
+walk2(all_dat,
+      sra_ids,
+      ~write_tsv(.x, file.path("salmon_modified", 
+                               paste0(.y, ".bothmRNA"))))
+
+files <- dir("salmon_modified", full.names = T)
+
+mature <- str_subset(files, "maturemRNA$")
+pre <- str_subset(files, "premRNA$")
+
+tx2gene_mapping2 <- tx2gene_mapping %>% 
+  mutate(gene_id = ifelse(str_detect(transcript_id, "^pre_"), transcript_id, gene_id))
+
+matures <- tximport(mature, 
+         type = "salmon",
+         tx2gene = tx2gene_mapping)
+
+pres <- tximport(pre, 
+         type = "salmon",
+         tx2gene = tx2gene_mapping)
+
+alls <- tximport(str_subset(files, "bothmRNA$"), 
+         type = "salmon",
+         tx2gene = tx2gene_mapping2)
+
+# make metadata sample ordered by columns in count matrix
+pdata <- inner_join(data_frame(Run = sra_ids),
+           mdata, by = "Run")
+
+pdata <- mutate(pdata, 
+                mzt = ifelse(str_detect(developmental_stage,
+                                        "^[2345]-[3456] hr embryo"),
+                             "zygotic",
+                             "maternal"),
+                strain_id = str_replace(strain, "-", "_"))
+
+dds <- DESeqDataSetFromTximport(alls, pdata, ~mzt + strain_id)
+dds <- dds[ rowSums(counts(dds) > 1) >= as.integer(ncol(counts(dds)) * 0.50)] 
+dds_mature <- DESeq(dds)
+res_mature <- results(dds_mature, 
+                      name = "mzt_zygotic_vs_maternal")
+res_mature_tidy <- results(dds_mature, 
+                           name = "mzt_zygotic_vs_maternal", 
+                           tidy = TRUE)
+```
+
+```{r}
+pre_plot_dat <- res_mature_tidy %>% 
+  as_tibble() %>% 
+  filter(str_detect(row, "^pre_")) %>% 
+  mutate(sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.05 & log2FoldChange < 0, "Down", "Not Sig")))
+
+pre_plot_dat <-  pre_plot_dat %>% filter(!is.na(sig))
+
+n_sig_up <- nrow(dplyr::filter(pre_plot_dat, sig == "Up")) %>% 
+  formatC(big.mark = ",")
+n_sig_down <- nrow(dplyr::filter(pre_plot_dat, sig == "Down"))  %>% 
+  formatC(big.mark = ",")
+n_notsig <- nrow(dplyr::filter(pre_plot_dat, sig == "Not Sig"))  %>% 
+  formatC(big.mark = ",")
+
+pre_plot <- ggplot(pre_plot_dat, 
+       aes(baseMean, log2FoldChange)) +
+  geom_point(aes(colour = sig), size = 0.1) +
+  scale_colour_viridis(discrete = TRUE,
+                       name = "",
+                       labels = c(paste0("Significantly decreased (n = ", n_sig_down, ")"),
+                                  paste0("Not Significant (n= ", n_notsig, ")"),
+                                  paste0("Significantly increased (n = ", n_sig_up, ")"))) +
+  scale_x_log10() + 
+  labs(x = expression(paste("log"[10], " Average Expression")),
+       y = expression(paste("log"[2], " ", frac("Zygotic", "Maternal"))),
+       title = "pre-mRNA") +
+  guides(colour = guide_legend(nrow = 3,
+                               override.aes = list(size = 3))) +
+  theme(legend.position = "top")
+  
+pre_plot
+
+
+mature_plot_dat <- res_mature_tidy %>% 
+  as_tibble() %>% 
+  filter(!str_detect(row, "^pre_")) %>% 
+  mutate(sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.05 & log2FoldChange < 0, "Down", "Not Sig")))
+mature_plot_dat <-  mature_plot_dat %>% filter(!is.na(sig))
+
+n_sig_up <- nrow(dplyr::filter(mature_plot_dat, sig == "Up")) %>% 
+  formatC(big.mark = ",")
+n_sig_down <- nrow(dplyr::filter(mature_plot_dat, sig == "Down"))  %>% 
+  formatC(big.mark = ",")
+n_notsig <- nrow(dplyr::filter(mature_plot_dat, sig == "Not Sig"))  %>% 
+  formatC(big.mark = ",")
+
+ 
+mat_plot <- ggplot(mature_plot_dat, 
+       aes(baseMean, log2FoldChange)) +
+  geom_point(aes(colour = sig), size = 0.1) +
+  scale_colour_viridis(discrete = TRUE,
+                       name = "",
+                       labels = c(paste0("Significantly decreased (n = ", n_sig_down, ")"),
+                                  paste0("Not Significant (n= ", n_notsig, ")"),
+                                  paste0("Significantly increased (n = ", n_sig_up, ")"))) +
+  scale_x_log10() + 
+  labs(x = expression(paste("log"[10], " Average Expression")),
+       y = expression(paste("log"[2], " ", frac("Zygotic", "Maternal"))),
+       title = "mature-mRNA") +
+  guides(colour = guide_legend(nrow = 3, 
+                               override.aes = list(size = 3))) +
+  theme(legend.position = "top")
+  
+plt <- plot_grid(pre_plot, mat_plot, nrow = 1)
+save_plot("salmon_deseq_pre_mat_results.pdf", plt, nrow = 1, ncol = 2)
+```
+
+
+# Load in salmon masked data
+
+```{r load_dat, message = F}
+files <- dir(file.path(data_dir, "salmon_masked", "drosophila"),
+            recursive = T,
+            pattern = "*quant.sf",
+            full.names = T)
+
+dat <- map(files, read_tsv)
+
+# name with libraryID
+names(dat) <- dirname(files) %>% 
+  str_split(., "[/]", simplify = T) %>% 
+  .[, 10]
+
+dat <- bind_rows(dat, .id = "libraryID")
+
+#join with main data
+dat <- inner_join(dat, 
+                  mdata,
+                  by = c("libraryID" = "Run"))
+
+dat <- anti_join(dat, 
+                 data_frame(gene_id = monoexonic_genes),
+                 by = c("Name" = "gene_id"))
+
+# classify transcripts as primary or mature
+dat %>% 
+  mutate(type = ifelse(str_detect(Name, 
+                                  "^pre_"), 
+                       "pre", "mature")) -> dat
+
+# drop unneeded data
+dat <- dplyr::select(dat,
+                     -c(Length:EffectiveLength, 
+                        NumReads))
+
+gene2tx <- gtf[, c("gene_id", "transcript_id")]
+gene2tx <- unique(gene2tx)
+gene2tx <- na.omit(gene2tx)
+
+# add in geneid attribute
+dat <- left_join(dat, gene2tx, by = c("Name" = "transcript_id")) %>% 
+  dplyr::rename(transcript_id = Name)
+
+# add geneid attribute for pre_ annotations
+dat <- mutate(dat, 
+              gene_id = ifelse(type == "pre",
+                               str_replace(transcript_id, "^pre_", ""),
+                               gene_id))
+
+dat <- mutate(dat,
+              monoexonic = gene_id %in% monoexonic_genes)
+
+# sum primary and mature TPMs for each gene 
+summary_dat <- dplyr::select(dat, TPM, gene_id, 
+              libraryID, type, developmental_stage,
+              study, strain) %>% 
+  group_by(gene_id, libraryID, 
+           developmental_stage, type,
+           strain) %>% 
+  dplyr::summarize(total_tpm = sum(TPM, na.rm = F)) %>% 
+  ungroup() 
+
+## calc primary ratio
+tpm_summary <- summary_dat %>% 
+  spread(type, total_tpm) %>% 
+  mutate(primary_ratio  = pre / (mature + pre))
+
+
+## calc mean primary ratio
+tpm_means <- tpm_summary %>% 
+  group_by(gene_id, 
+           developmental_stage,
+           strain) %>% 
+  summarize(mean_primary = mean(primary_ratio,
+                                na.rm = T)) 
+
+tpm_means <- mutate(tpm_means, 
+                       stage = factor(developmental_stage, 
+                                         levels = c(
+                                           "Stage 11 oocyte",
+                                           "Stage 12 oocyte",
+                                           "Stage 13 oocyte",
+                                           "Stage 14 oocyte",
+                                           "Activated egg",
+                                           "0-1 hr embryo",
+                                           "1-2 hr embryo",
+                                           "2-3 hr embryo",
+                                           "3-4 hr embryo",
+                                           "4-5 hr embryo",
+                                           "5-6 hr embryo")
+                                         )
+                       )
+
+tpm_means <- mutate(tpm_means,
+                       strain = ifelse(strain == "wt",
+                                       paste(strain, 
+                                             "(Eichhorn)"),
+                                       paste(strain,
+                                             "(Rissland)")))
+                                        
+tpm_means %>% 
+  group_by(gene_id, developmental_stage) %>% 
+  summarize(mean_primary = mean(mean_primary, na.rm = T)) %>% 
+  mutate(strain = "all strains") %>% 
+  bind_rows(tpm_means, .) %>% 
+  arrange(gene_id) %>% 
+  ungroup() -> all_combined
+
+ggplot(all_combined, 
+       aes(developmental_stage, mean_primary)) +
+  geom_boxplot(aes(fill = developmental_stage), coef = 1e3) + 
+  facet_grid(~strain, scale = "free") +
+  labs(x = "",
+       y = expression(frac("pre-mRNA TPM", 
+                           "mature + pre-mRNA TPM"))) +
+  scale_fill_brewer(palette = "Set1",
+                    name = "Transcript Type",
+                    breaks = c("pre", "mature"),
+                    labels = c("pre-mRNA", "mature-mRNA")) +
+  theme(
+    axis.text.x = element_text(angle = 90,
+                               vjust = 0.5,
+                               hjust = 0.5)
+  )
+
+
+all_combined <- mutate(all_combined,
+                       developmental_stage = factor(developmental_stage,
+                                                    levels = c(
+                                                      "Stage 11 oocyte",
+                                                      "Stage 12 oocyte",
+                                                      "Stage 13 oocyte",
+                                                      "Stage 14 oocyte",
+                                                      "Activated egg",
+                                                      "0-1 hr embryo",
+                                                      "1-2 hr embryo",
+                                                      "2-3 hr embryo",
+                                                      "3-4 hr embryo",
+                                                      "4-5 hr embryo",
+                                                      "5-6 hr embryo")))
+
+
+salmon_boxplt <- ggplot(filter(all_combined, strain != "all strains"), 
+       aes(developmental_stage, mean_primary)) +
+  geom_boxplot(aes(fill = developmental_stage), coef = 1e3) + 
+  facet_grid(~strain, scale = "free") +
+  labs(x = "",
+       y = expression(frac("pre-mRNA TPM", 
+                           "mature + pre-mRNA TPM"))) +
+  scale_fill_brewer(palette = "Paired",
+                    name = "Transcript Type",
+                    breaks = c("pre", "mature"),
+                    labels = c("pre-mRNA", "mature-mRNA")) +
+  theme(
+    axis.text.x = element_text(angle = 90,
+                               vjust = 0.5,
+                               hjust = 0.5),
+    strip.text = element_text(size = 8)
+  )
+
+save_plot("salmon_masked_boxplt-pre-mRNA-ratios.pdf", salmon_boxplt, base_width = 6, base_height = 4.5)
+```
+
+```{r, split_salmon}
+
+tx2gene_mapping <- dplyr::select(dat, 
+                         transcript_id, 
+                         gene_id) %>% 
+  unique() %>% 
+  as.data.frame()
+
+files <- dir(file.path(data_dir, "salmon_masked"),
+            recursive = T,
+            pattern = "*quant.sf",
+            full.names = T)
+
+sra_ids <- dirname(files) %>% 
+  str_split(., "/", simplify = T) %>% 
+  .[, 10]
+
+keep <- sra_ids %in% mdata$Run
+files <- files[keep]
+sra_ids <- sra_ids[keep]
+
+all_dat <- map(files, read_tsv)
+
+all_pre <- map(all_dat, 
+                 ~dplyr::filter(.x,
+                                str_detect(Name, "^pre_")))
+
+all_mat <- map(all_dat, 
+               ~dplyr::filter(.x,
+                              !str_detect(Name, "^pre_")))
+
+dir.create("salmon_masked_modified", recursive = T)
+
+walk2(all_pre,
+      sra_ids,
+      ~write_tsv(.x, file.path("salmon_masked_modified", 
+                               paste0(.y, ".premRNA"))))
+walk2(all_mat,
+      sra_ids,
+      ~write_tsv(.x, file.path("salmon_masked_modified", 
+                               paste0(.y, ".maturemRNA"))))
+walk2(all_dat,
+      sra_ids,
+      ~write_tsv(.x, file.path("salmon_masked_modified", 
+                               paste0(.y, ".bothmRNA"))))
+
+files <- dir("salmon_masked_modified", full.names = T)
+
+mature <- str_subset(files, "maturemRNA$")
+pre <- str_subset(files, "premRNA$")
+
+tx2gene_mapping2 <- tx2gene_mapping %>% 
+  mutate(gene_id = ifelse(str_detect(transcript_id, "^pre_"), transcript_id, gene_id))
+
+matures <- tximport(mature, 
+         type = "salmon",
+         tx2gene = tx2gene_mapping)
+
+pres <- tximport(pre, 
+         type = "salmon",
+         tx2gene = tx2gene_mapping)
+
+alls <- tximport(str_subset(files, "bothmRNA$"), 
+         type = "salmon",
+         tx2gene = tx2gene_mapping2)
+
+# make metadata sample ordered by columns in count matrix
+pdata <- inner_join(data_frame(Run = sra_ids),
+           mdata, by = "Run")
+
+pdata <- mutate(pdata, 
+                mzt = ifelse(str_detect(developmental_stage,
+                                        "^[2345]-[3456] hr embryo"),
+                             "zygotic",
+                             "maternal"),
+                strain_id = str_replace(strain, "-", "_"))
+
+dds <- DESeqDataSetFromTximport(alls, pdata, ~mzt + strain_id)
+dds <- dds[ rowSums(counts(dds) > 1) >= as.integer(ncol(counts(dds)) * 0.50)] 
+dds_mature <- DESeq(dds)
+res_mature <- results(dds_mature, 
+                      name = "mzt_zygotic_vs_maternal")
+res_mature_tidy <- results(dds_mature, 
+                           name = "mzt_zygotic_vs_maternal", 
+                           tidy = TRUE)
+```
+
+```{r}
+pre_plot_dat <- res_mature_tidy %>% 
+  as_tibble() %>% 
+  filter(str_detect(row, "^pre_")) %>% 
+  mutate(sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.05 & log2FoldChange < 0, "Down", "Not Sig")))
+
+pre_plot_dat <-  pre_plot_dat %>% filter(!is.na(sig))
+
+n_sig_up <- nrow(dplyr::filter(pre_plot_dat, sig == "Up")) %>% 
+  formatC(big.mark = ",")
+n_sig_down <- nrow(dplyr::filter(pre_plot_dat, sig == "Down"))  %>% 
+  formatC(big.mark = ",")
+n_notsig <- nrow(dplyr::filter(pre_plot_dat, sig == "Not Sig"))  %>% 
+  formatC(big.mark = ",")
+
+pre_plot <- ggplot(pre_plot_dat, 
+       aes(baseMean, log2FoldChange)) +
+  geom_point(aes(colour = sig), size = 0.1) +
+  scale_colour_viridis(discrete = TRUE,
+                       name = "",
+                       labels = c(paste0("Significantly decreased (n = ", n_sig_down, ")"),
+                                  paste0("Not Significant (n= ", n_notsig, ")"),
+                                  paste0("Significantly increased (n = ", n_sig_up, ")"))) +
+  scale_x_log10() + 
+  labs(x = expression(paste("log"[10], " Average Expression")),
+       y = expression(paste("log"[2], " ", frac("Zygotic", "Maternal"))),
+       title = "pre-mRNA") +
+  guides(colour = guide_legend(nrow = 3,
+                               override.aes = list(size = 3))) +
+  theme(legend.position = "top")
+  
+pre_plot
+
+
+mature_plot_dat <- res_mature_tidy %>% 
+  as_tibble() %>% 
+  filter(!str_detect(row, "^pre_")) %>% 
+  mutate(sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.05 & log2FoldChange < 0, "Down", "Not Sig")))
+mature_plot_dat <-  mature_plot_dat %>% filter(!is.na(sig))
+
+n_sig_up <- nrow(dplyr::filter(mature_plot_dat, sig == "Up")) %>% 
+  formatC(big.mark = ",")
+n_sig_down <- nrow(dplyr::filter(mature_plot_dat, sig == "Down"))  %>% 
+  formatC(big.mark = ",")
+n_notsig <- nrow(dplyr::filter(mature_plot_dat, sig == "Not Sig"))  %>% 
+  formatC(big.mark = ",")
+
+ 
+mat_plot <- ggplot(mature_plot_dat, 
+       aes(baseMean, log2FoldChange)) +
+  geom_point(aes(colour = sig), size = 0.1) +
+  scale_colour_viridis(discrete = TRUE,
+                       name = "",
+                       labels = c(paste0("Significantly decreased (n = ", n_sig_down, ")"),
+                                  paste0("Not Significant (n= ", n_notsig, ")"),
+                                  paste0("Significantly increased (n = ", n_sig_up, ")"))) +
+  scale_x_log10() + 
+  labs(x = expression(paste("log"[10], " Average Expression")),
+       y = expression(paste("log"[2], " ", frac("Zygotic", "Maternal"))),
+       title = "mature-mRNA") +
+  guides(colour = guide_legend(nrow = 3, 
+                               override.aes = list(size = 3))) +
+  theme(legend.position = "top")
+  
+plt <- plot_grid(pre_plot, mat_plot, nrow = 1)
+save_plot("salmon_masked_deseq_pre_mat_results.pdf", plt, nrow = 1, ncol = 2)
+```
