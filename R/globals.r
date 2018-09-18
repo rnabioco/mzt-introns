@@ -19,20 +19,14 @@ library(tximport)
 #library(edgeR)
 library(DESeq2)
 library(tibble)
-
+library(here)
 #### Paths ####
 
-project_dir <- path.expand("~/Projects/mzt-introns")
+project_dir <- here()
 data_dir <- file.path(project_dir, "data")
 results_dir <- file.path(project_dir, "results")
 docs_dir <- file.path(project_dir, "docs")
 db_dir <- file.path(project_dir, "dbases")
-
-# vector of figure paths
-figs_dir <-  file.path(results_dir, "Figures") %>%
-  dir(pattern = "Figure_[1-4]$",
-      include.dirs = TRUE,
-      full.names = T)
 
 #### functions ####
 source(file.path(project_dir, "R", "utils.r"))
