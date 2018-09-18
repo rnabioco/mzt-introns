@@ -1,0 +1,168 @@
+---
+title: "miR-430 seeds"
+author: "Kent Riemondy RBI"
+date: "4/6/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = FALSE)
+```
+
+```{r libs}
+library(valr)
+library(tidyverse)
+library(rtracklayer)
+library(doParallel)
+source("../../R/globals.r")
+```
+
+## Examine miR-430 seed matches in Zebrafish data
+
+```{r get_seeds}
+get_3utrs <- function(gtf_file, gene_ids, gene_col = "gene_id", transcript_col = "transcript_id"){
+  gtf <- import(gtf_file)
+  gtf <- as.data.frame(gtf)
+  gtf <- filter(gtf, gene_id %in% gene_ids)
+  gtf <- dplyr::select(gtf, 
+                       chrom = seqnames, 
+                       start, end, type, strand, exon_id, one_of(c(gene_col, transcript_col)))
+  gtf <- dplyr::filter(gtf, 
+                       type %in% c("exon", "CDS"))
+  cds_gtf <- filter(gtf, type == "CDS") %>% 
+         group_by(transcript_id) %>% 
+         summarize(cds_start = unique(ifelse(strand == "+",
+                                  min(start), 
+                                  max(end))),
+                   cds_end = unique(ifelse(strand == "+", 
+                                max(end),
+                                min(start)))) %>% 
+    left_join(gtf, ., by = "transcript_id")
+  
+  utr3_gtf <- cds_gtf %>% 
+    filter(type == "exon") %>% 
+    group_by(transcript_id) %>% 
+    mutate(utr3_exon = ifelse(strand == "+",
+                              ifelse(start >= cds_end,
+                                     "yes",
+                                     ifelse(cds_end >= start & cds_end <= end,
+                                            "overlapping",
+                                            "no")),
+                              ifelse(end <= cds_end,
+                                     "yes",
+                                     ifelse(cds_end >= start & cds_end <= end,
+                                            "overlapping",
+                                            "no")))) %>% 
+    ungroup() %>% 
+    filter(utr3_exon != "no")
+  
+  utr3_res <- utr3_gtf %>% 
+    group_by(transcript_id) %>% 
+    mutate(start = ifelse(strand == "+" & utr3_exon == "overlapping",
+                          cds_end,
+                          start),
+           end = ifelse(strand == "-" & utr3_exon == "overlapping",
+                        cds_end,
+                        end))  %>% 
+    filter(start != end) %>% 
+    select(chrom:transcript_id)
+  
+  res <- group_by(utr3_res, gene_id, strand) %>% 
+    bed_merge() %>% 
+    ungroup()
+  res
+}
+
+counts_cols <- read_tsv(file.path(results_dir, "2018-03-15", "zebrafish_mature_norm_counts.tsv"),
+                        col_names = F, n_max = 1)
+counts <- read_tsv(file.path(results_dir, "2018-03-15", "zebrafish_mature_norm_counts.tsv"),
+                   col_names = F, skip = 1)
+colnames(counts) <- c("gene_id", counts_cols)
+counts <- as.data.frame(counts)
+rownames(counts) <- counts[, 1]
+counts[, 1] <- NULL
+
+gtffile <- "~/Projects/shared_dbases/annotation/zebrafish/GRCz10/Danio_rerio.GRCz10.91.gtf"
+genome <- "~/Projects/shared_dbases/genomes/zebrafish/GRCz10/Danio_rerio.GRCz10.dna.toplevel.fa"
+
+utrs <- get_3utrs(gtffile, gene_ids = rownames(counts))
+utr_seqs <- get_sequences(utrs, genome)
+
+mer6 <- "GCAGTT"
+mer8 <- "AGCAGTTA"
+
+utr_seqs <- mutate(utr_seqs, 
+                   mer6_counts = str_count(seq, mer6),
+                   mer8_counts = str_count(seq, mer8))
+```
+
+
+```{r diff_genes}
+
+clusters <- read_tsv(file.path(results_dir, "2018-03-15",
+                               "zebrafish_maturerna_cluster_ids.tsv"))
+
+utr_seqs <- left_join(utr_seqs, clusters, by = "gene_id")
+
+utr_seqs <- mutate(utr_seqs, 
+                   cluster = as.character(cluster),
+                   cluster = ifelse(is.na(cluster),
+                                    "background",
+                                    cluster),
+                   utr_len = end - start, 
+                   seed_density_6mer = mer6_counts / utr_len,
+                   seed_density_8mer = mer8_counts / utr_len)
+
+utr_summary <- group_by(utr_seqs, gene_id) %>% 
+  summarize(mer6_counts = sum(mer6_counts), 
+            mer8_counts = sum(mer8_counts),
+            cluster = unique(cluster))
+
+seed_matches <- ggplot(utr_summary, 
+       aes(cluster, mer6_counts)) +
+  geom_boxplot(aes(fill = cluster)) +
+  geom_jitter() +
+  theme(legend.position = "none")
+
+save_plot("zelda_boxplots.pdf", plt, nrow = 1, ncol = 2)
+
+
+```
+
+```{r hmaps}
+library(ComplexHeatmap)
+library(circlize)
+
+zscores <- t(scale(t(log2(counts + 1))))
+
+cluster_res <- utr_summary %>% filter(cluster != "background")
+annotation_data <- cluster_res[, c("gene_id", "mer6_counts", "mer8_counts", "cluster")] %>%
+  as.data.frame()
+rownames(annotation_data) <- annotation_data[, 1]
+annotation_data[, 1] <- NULL
+
+ht <- Heatmap(zscores[rownames(annotation_data), ],
+              name = "pre-mRNA \nZscore",
+              split = annotation_data$cluster,
+              show_row_names = F,
+              show_row_dend = F)
+
+ha <- HeatmapAnnotation(annotation_data[, c("mer8_counts", "mer6_counts")],
+                        col = list(
+                          mer8_counts = colorRamp2(c(0, max(annotation_data$mer8_counts, 
+                                                            na.rm = T)), 
+                                             c("white", "darkred")),
+                          mer6_counts = colorRamp2(c(0, max(annotation_data$mer6_counts, 
+                                                              na.rm = T)), c("white",
+                                                                             "darkblue"))),
+                        which = "row", width = unit(1, "cm"),
+                        annotation_legend_param = list(mer8_counts = list(title = "miR-430 8mer"),
+                                                       mer6_counts = list(title = "miR-430 6mer")))
+ht + ha
+
+pdf("zelda_binding_premRNA_clusters.pdf")
+print(ht + ha)
+dev.off()
+```
+

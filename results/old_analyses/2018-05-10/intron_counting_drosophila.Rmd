@@ -83,7 +83,7 @@ ivl_df <- bind_rows(list(
 ivl_df <- dplyr::select(ivl_df, chrom:score, strand)
 ```
 
-Next exclude exonic regions and keep regions with at least 2 reads. These regions will be excluded from intron intervals for computing intron coverage. Also add repeatMasker regions. (downloaded from ucsc table browser 2018-07-09)
+Next exclude exonic regions and keep regions with at least 1 reads. These regions will be excluded from intron intervals for computing intron coverage. Also add repeatMasker regions. (downloaded from ucsc table browser 2018-07-09)
 
 ```{r drop_exons}
 
