@@ -22,13 +22,13 @@ knitr::opts_chunk$set(warning = FALSE)
 Goal is to compare different methods for quantifing intronic abundance. 
 
 1) Naive unique mapping reads in introns versus exons
-2) Salmon spiked in with pre-mRNA annotaitons
+2) Salmon spiked in with pre-mRNA annotations
 3) Salmon spiked in with pre-mRNA annotations, with regions with coverage in the t = 0 
 stages masked in the pre-mRNA annotations. Masking converts all sequences to Ns
 4) Salmon spiked in with pre-mRNA annotations, with regions with coverage in the t = 0 
 stages masked in the pre-mRNA annotations. Additionally mask internal exonic sequences to avoid extensive sequence overlap with the spliced mRNA transcript. Masking converts all sequences to Ns
 5) Use bowtie2 for alignment then quantify with salmon, using the annotaitons from 3.
-6) Use bowtie2 for alignment then quantify with salmon, using the annotaitons from 4.
+6) Use bowtie2 for alignment then quantify with salmon, using the annotations from 4.
 
 The masking process converts many nucleotides to N which could be problematic for salmon. When building the transcript index, `salmon` will by default insert pseudo-random nucleotides for the N's. The impact of this is unknown and could be problematic. 
 
@@ -122,7 +122,8 @@ gtf_summary <- dplyr::filter(gtf, type == "exon") %>%
   bed_merge() %>% 
   dplyr::summarize(total_exons = n())
 
-monoexonic_genes <- dplyr::filter(gtf_summary, total_exons == 1) %>%
+monoexonic_genes <- dplyr::filter(gtf_summary, 
+                                  total_exons == 1) %>%
   pull(gene_id)
 ```
 
@@ -195,13 +196,13 @@ fa_types <- c(
 )
 
 files <- map(fa_types, 
-                 ~file.path(data_dir,
-                   "salmon", 
-                   "drosophila",
-                   mdata$study,
-                   .x,
-                   mdata$Run,
-                   "quant.sf"))
+             ~file.path(data_dir,
+                        "salmon", 
+                        "drosophila",
+                        mdata$study,
+                        .x,
+                        mdata$Run,
+                        "quant.sf"))
 
 dat <- map(files, ~map(.x, read_tsv))
 names(dat) <- fa_types
@@ -255,6 +256,7 @@ salmon_dat <- mutate(dat,
 ```{r read_in_bt2_salmon}
 
 fa_types <- c(
+  #"primary_transcripts",
   "primary_transcripts_masked",
   "primary_transcripts_masked_exons"
 )
@@ -348,7 +350,8 @@ summary_dat <- dplyr::select(dat,
            developmental_stage, 
            count_type,
            strain) %>% 
-  dplyr::summarize(total_tpm = sum(TPM, na.rm = F)) %>% 
+  dplyr::summarize(total_tpm = sum(TPM, 
+                                   na.rm = F)) %>% 
   ungroup() 
 
 ## calc primary ratio
@@ -467,7 +470,7 @@ avg_abundance <- summary_dat %>%
 avg_abundance <- avg_abundance %>% 
   ungroup() %>% 
   spread(mzt, mean_mzt_expr) %>% 
-  mutate(log2abundance = log2(post_mzt + 1) - log2(pre_mzt + 1))
+  mutate(log2mzt = log2(post_mzt + 1) - log2(pre_mzt + 1))
 
 plt_dat <- mutate(avg_abundance,
                   mean_abundance = log2(mean_abundance + 1))
@@ -482,9 +485,8 @@ plt_dat_exons <- split(plt_dat_exons, plt_dat_exons$expt)
 
 plts <- imap(plt_dat_exons, 
   ~ggplot(.x, 
-       aes(mean_abundance, log2abundance)) +
+       aes(mean_abundance, log2mzt)) +
   geom_point(size = 0.1) + 
-  scale_x_log10() + 
   facet_grid(~strain, 
              scale = "free") +
   labs(x = "mean abundance (log 10)",
@@ -518,7 +520,7 @@ plt_dat_introns <- split(plt_dat_introns,
 
 plts <- imap(plt_dat_introns, 
   ~ggplot(.x, 
-       aes(mean_abundance, log2abundance)) +
+       aes(mean_abundance, log2mzt)) +
   geom_point(size = 0.1) + 
   facet_grid(~strain, 
              scale = "free") +
@@ -544,7 +546,7 @@ save_plot("ma_plots_introns.png",
           ncol = 2)
 ```
 
-```{r classify_txs_mzt}
+```{r classify_txs_mzt, eval = F}
 ## select transcripts with tpm > 0.5 as maternal
 
 mzt_class <- mutate(avg_abundance, 
@@ -581,7 +583,7 @@ gene2tx <- as_data_frame(gene2tx)
 mzt_class <- left_join(mzt_class, gene2tx, by = "gene_id") %>% unique()
 ```
 
-```{r}
+```{r, eval = F}
 if(!file.exists("eisen_data.tsv")){
   download.file("https://ndownloader.figshare.com/files/400050",
               "eisen_data.tsv")
@@ -590,7 +592,7 @@ edata <- read_tsv("eisen_data.tsv")
 
 ```
 
-```{r}
+```{r, eval = F}
 
 cas_cols <- str_subset(colnames(edata), "cas")
 
@@ -640,3 +642,506 @@ save_plot("eisen_vs_intron_classification.pdf", plt,
           base_height = 7)
 ```
 
+
+## alignment info
+
+```{r}
+library(jsonlite)
+fa_types <- c(
+  "primary_transcripts",
+  "primary_transcripts_masked",
+  "primary_transcripts_masked_exons"
+)
+
+files <- map(fa_types, 
+             ~file.path(data_dir,
+                        "salmon", 
+                        "drosophila",
+                        mdata$study,
+                        .x,
+                        mdata$Run,
+                        "aux_info",
+                        "meta_info.json"))
+
+align_dat <- map(files, ~map(.x, jsonlite::fromJSON)) %>% 
+  map(., ~map(.x, ~.x$percent_mapped))
+
+names(dat) <- fa_types
+
+
+map(
+  align_dat,
+  ~ data_frame(
+    percent_alignment = unlist(.x),
+    sra_number = mdata$Run,
+    stage = mdata$developmental_stage,
+    strain = mdata$strain
+  )
+) %>% bind_rows(., .id = "fasta_type")
+
+
+```
+
+## DE testing
+
+### Salmon with bt2 alignment
+First read in salmon data into tximport
+```{r}
+fa_types <- c(
+  #"primary_transcripts",
+  "primary_transcripts_masked",
+  "primary_transcripts_masked_exons"
+)
+
+
+pdata <- mutate(mdata, 
+                mzt = ifelse(str_detect(developmental_stage,
+                                        "^[2345]-[3456] hr embryo"),
+                             "zygotic",
+                             "maternal"),
+                strain_id = str_replace(strain, "-", "_"))
+
+pdata_split <- split(pdata, pdata$study)
+
+eichorn_files <- map(fa_types, 
+                 ~file.path(data_dir,
+                   "salmon_bt2_masked", 
+                   "drosophila",
+                   pdata_split$EICHHORN$study,
+                   .x,
+                   pdata_split$EICHHORN$Run,
+                   "quant.sf"))
+
+rissland_files <- map(fa_types, 
+                 ~file.path(data_dir,
+                   "salmon_bt2_masked", 
+                   "drosophila",
+                   pdata_split$RISSLAND$study,
+                   .x,
+                   pdata_split$RISSLAND$Run,
+                   "quant.sf"))
+
+tids <- read_tsv(eichorn_files[[1]][1]) %>% 
+  dplyr::select(Name)
+tx2gene <-gtf %>% 
+  filter(type == "transcript") %>% 
+  select(transcript_id, gene_id) %>% 
+  tbl_df() %>% 
+  unique()
+
+tx2gene_mapping <- full_join(tids, tx2gene,
+                             by = c("Name" = "transcript_id"))
+
+# add in "gene id" for pre mRNA transcript
+tx2gene_mapping <- mutate(tx2gene_mapping,
+                          gene_id = ifelse(is.na(gene_id) & str_detect(Name, "^pre_"),
+                                           Name,
+                                           gene_id)) %>% 
+  dplyr::rename(transcript_id = Name)
+          
+                                 
+rs_tx_objs <- map(rissland_files, 
+               ~tximport(.x, 
+                         type = "salmon",
+                         tx2gene = tx2gene_mapping))
+
+                                 
+ei_tx_objs <- map(eichorn_files, 
+               ~tximport(.x, 
+                         type = "salmon",
+                         tx2gene = tx2gene_mapping))
+```
+
+Run deseq with post-mzt v. pre-mzt
+```{r}
+ei_ddobjs <- map(ei_tx_objs, 
+              function(x) {
+                dds <- DESeqDataSetFromTximport(x, pdata_split$EICHHORN, ~mzt )
+                dds <- DESeq(dds)
+                dds
+              })
+
+rs_ddobjs <- map(rs_tx_objs, 
+              function(x) {
+                dds <- DESeqDataSetFromTximport(x, pdata_split$RISSLAND, ~mzt + strain_id)
+                dds <- DESeq(dds)
+                dds
+              })
+```
+
+Extract results and make MA plots
+```{r}
+ei_res <- map_dfr(ei_ddobjs, ~results(.x, 
+                                       name = "mzt_zygotic_vs_maternal", 
+                                       tidy = T), .id = "fasta_type") %>% 
+  tbl_df() %>% 
+  mutate(count_type = ifelse(startsWith(row, "pre_"), 
+                        "intron",
+                        "exon"),
+         sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.05 & log2FoldChange < 0,
+                             "Down", "Not Sig"))) %>% 
+  filter(!is.na(sig))
+
+ris_res <- map_dfr(rs_ddobjs, ~results(.x, 
+                                       name = "mzt_zygotic_vs_maternal", 
+                                       tidy = T), .id = "fasta_type") %>% 
+  tbl_df() %>% 
+  mutate(count_type = ifelse(startsWith(row, "pre_"), 
+                        "intron",
+                        "exon"),
+         sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.05 & log2FoldChange < 0,
+                             "Down", "Not Sig"))) %>% 
+  filter(!is.na(sig))
+
+
+
+plot_ma <- function(df, plt_title = NULL) {
+  n_sig_up <- nrow(dplyr::filter(df, sig == "Up")) %>%
+    formatC(big.mark = ",")
+  n_sig_down <-
+    nrow(dplyr::filter(df, sig == "Down"))  %>%
+    formatC(big.mark = ",")
+  n_notsig <-
+    nrow(dplyr::filter(df, sig == "Not Sig"))  %>%
+    formatC(big.mark = ",")
+  
+  pre_plot <- ggplot(df,
+                     aes(baseMean,
+                         log2FoldChange)) +
+    geom_point(aes(colour = sig), size = 0.1) +
+    scale_colour_viridis(
+      discrete = TRUE,
+      name = "",
+      labels = c(
+        paste0("Significantly decreased (n = ", n_sig_down, ")"),
+        paste0("Not Significant (n= ", n_notsig, ")"),
+        paste0("Significantly increased (n = ", n_sig_up, ")")
+      )
+    ) +
+    facet_wrap(~count_type) +
+    scale_x_log10() +
+    labs(x = expression(paste("log"[10], " Average Expression")),
+         y = expression(paste("log"[2], " ", frac(
+           "Zygotic", "Maternal"
+         ))),
+         title = plt_title) +
+    guides(colour = guide_legend(nrow = 3,
+                                 override.aes = list(size = 3))) +
+    theme(legend.position = "top")
+  
+  pre_plot
+}
+
+plts <- imap(split(ei_res, 
+           list(ris_res$fasta_type,
+                         ris_res$count_type)), 
+    ~plot_ma(.x, .y))
+
+plt <- plot_grid(plotlist = plts)
+save_plot("eichorn_ma_plot_salmon_bt2.pdf", plt, nrow = 2, ncol = 3)
+
+
+plts <- imap(split(ris_res, 
+           list(ris_res$fasta_type,
+                         ris_res$count_type)), 
+    ~plot_ma(.x, .y))
+
+plt <- plot_grid(plotlist = plts)
+save_plot("rissland_ma_plot_salmon_bt2.pdf", plt, nrow = 2, ncol = 3)
+
+```
+
+### Salmon direct alignment
+
+First read in salmon data into tximport
+```{r}
+fa_types <- c(
+  "primary_transcripts",
+  "primary_transcripts_masked",
+  "primary_transcripts_masked_exons"
+)
+
+pdata <- mutate(mdata, 
+                mzt = ifelse(str_detect(developmental_stage,
+                                        "^[2345]-[3456] hr embryo"),
+                             "zygotic",
+                             "maternal"),
+                strain_id = str_replace(strain, "-", "_"))
+
+pdata_split <- split(pdata, pdata$study)
+
+eichorn_files <- map(fa_types, 
+                 ~file.path(data_dir,
+                   "salmon", 
+                   "drosophila",
+                   pdata_split$EICHHORN$study,
+                   .x,
+                   pdata_split$EICHHORN$Run,
+                   "quant.sf"))
+
+rissland_files <- map(fa_types, 
+                 ~file.path(data_dir,
+                   "salmon", 
+                   "drosophila",
+                   pdata_split$RISSLAND$study,
+                   .x,
+                   pdata_split$RISSLAND$Run,
+                   "quant.sf"))
+
+tids <- read_tsv(eichorn_files[[1]][1]) %>% 
+  dplyr::select(Name)
+tx2gene <-gtf %>% 
+  filter(type == "transcript") %>% 
+  select(transcript_id, gene_id) %>% 
+  tbl_df() %>% 
+  unique()
+
+tx2gene_mapping <- full_join(tids, tx2gene,
+                             by = c("Name" = "transcript_id"))
+
+# add in "gene id" for pre mRNA transcript
+tx2gene_mapping <- mutate(tx2gene_mapping,
+                          gene_id = ifelse(is.na(gene_id) & str_detect(Name, "^pre_"),
+                                           Name,
+                                           gene_id)) %>% 
+  dplyr::rename(transcript_id = Name)
+          
+                                 
+rs_tx_objs <- map(rissland_files, 
+               ~tximport(.x, 
+                         type = "salmon",
+                         tx2gene = tx2gene_mapping))
+
+                                 
+ei_tx_objs <- map(eichorn_files, 
+               ~tximport(.x, 
+                         type = "salmon",
+                         tx2gene = tx2gene_mapping))
+```
+
+Run deseq with post-mzt v. pre-mzt
+```{r}
+ei_ddobjs <- map(ei_tx_objs, 
+              function(x) {
+                dds <- DESeqDataSetFromTximport(x, 
+                                                pdata_split$EICHHORN, 
+                                                ~mzt )
+                dds <- DESeq(dds)
+                dds
+              })
+
+rs_ddobjs <- map(rs_tx_objs, 
+              function(x) {
+                dds <- DESeqDataSetFromTximport(x, 
+                                                pdata_split$RISSLAND, 
+                                                ~mzt + strain_id)
+                dds <- DESeq(dds)
+                dds
+              })
+
+names(ei_ddobjs) <- fa_types
+names(rs_ddobjs) <- fa_types
+```
+
+Extract results and make MA plots
+```{r}
+ei_res <- map_dfr(ei_ddobjs, ~results(.x, 
+                                       name = "mzt_zygotic_vs_maternal", 
+                                       tidy = T), .id = "fasta_type") %>% 
+  tbl_df() %>% 
+  mutate(count_type = ifelse(startsWith(row, "pre_"), 
+                        "intron",
+                        "exon"),
+         sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.05 & log2FoldChange < 0,
+                             "Down", "Not Sig"))) %>% 
+  filter(!is.na(sig))
+
+ris_res <- map_dfr(rs_ddobjs, ~results(.x, 
+                                       name = "mzt_zygotic_vs_maternal", 
+                                       tidy = T), .id = "fasta_type") %>% 
+  tbl_df() %>% 
+  mutate(count_type = ifelse(startsWith(row, "pre_"), 
+                        "intron",
+                        "exon"),
+         sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.05 & log2FoldChange < 0,
+                             "Down", "Not Sig"))) %>% 
+  filter(!is.na(sig))
+
+
+
+plot_ma <- function(df, plt_title = NULL) {
+  n_sig_up <- nrow(dplyr::filter(df, sig == "Up")) %>%
+    formatC(big.mark = ",")
+  n_sig_down <-
+    nrow(dplyr::filter(df, sig == "Down"))  %>%
+    formatC(big.mark = ",")
+  n_notsig <-
+    nrow(dplyr::filter(df, sig == "Not Sig"))  %>%
+    formatC(big.mark = ",")
+  
+  pre_plot <- ggplot(df,
+                     aes(baseMean,
+                         log2FoldChange)) +
+    geom_point(aes(colour = sig), size = 0.1) +
+    scale_colour_viridis(
+      discrete = TRUE,
+      name = "",
+      labels = c(
+        paste0("Significantly decreased (n = ", n_sig_down, ")"),
+        paste0("Not Significant (n= ", n_notsig, ")"),
+        paste0("Significantly increased (n = ", n_sig_up, ")")
+      )
+    ) +
+    facet_wrap(~count_type) +
+    scale_x_log10() +
+    labs(x = "Average Expression",
+         y = expression(paste("log"[2], " ", frac(
+           "Post-MZT", "Pre-MZT"
+         ))),
+         title = plt_title) +
+    guides(colour = guide_legend(nrow = 3,
+                                 override.aes = list(size = 3))) +
+    theme(legend.position = "top")
+  
+  pre_plot
+}
+
+plts <- imap(split(ei_res, 
+           list(ei_res$fasta_type,
+                       ei_res$count_type)), 
+    ~plot_ma(.x, .y))
+
+plt <- plot_grid(plotlist = plts)
+save_plot("eichorn_ma_plot_salmon.pdf", plt, nrow = 2, ncol = 3)
+
+plts <- imap(split(ris_res, 
+           list(ris_res$fasta_type,
+                         ris_res$count_type)), 
+    ~plot_ma(.x, .y))
+
+plt <- plot_grid(plotlist = plts)
+save_plot("rissland_ma_plot_salmon.pdf", plt, nrow = 2, ncol = 3)
+```
+### Featurecounts
+
+```{r}
+eichorn_files <- map(c("exon", "intron"),
+                     ~file.path(data_dir,
+                   "featurecounts", 
+                   "drosophila",
+                   pdata_split$EICHHORN$study,
+                   paste0(pdata_split$EICHHORN$Run, 
+                          "_",
+                          .x,
+                          "_counts.tsv")))
+
+rissland_files <- map(c("exon", "intron"),
+                     ~file.path(data_dir,
+                   "featurecounts", 
+                   "drosophila",
+                   pdata_split$RISSLAND$study,
+                   paste0(pdata_split$RISSLAND$Run, 
+                          "_",
+                          .x,
+                          "_counts.tsv")))
+ei_count_dat <- pmap(eichorn_files, 
+                  function(x, y){
+                    exon <- read_tsv(x, 
+                                     skip = 2, 
+                                     col_names = F) %>% 
+                      dplyr::select(X1, X7)
+                    intron <- read_tsv(y,
+                                       skip = 2, 
+                                       col_names = F) %>% 
+                      dplyr::select(X1, X7) %>% 
+                      mutate(X1 = str_c("pre_", X1))
+                    bind_rows(exon, intron)
+                  })
+
+names(ei_count_dat) <- pdata_split$EICHHORN$Run
+
+
+ris_count_dat <- pmap(rissland_files, 
+                  function(x, y){
+                    exon <- read_tsv(x, 
+                                     skip = 2, 
+                                     col_names = F) %>% 
+                      dplyr::select(X1, X7)
+                    intron <- read_tsv(y,
+                                       skip = 2, 
+                                       col_names = F) %>% 
+                      dplyr::select(X1, X7) %>% 
+                      mutate(X1 = str_c("pre_", X1))
+                    bind_rows(exon, intron)
+                  })
+names(ris_count_dat) <- pdata_split$RISSLAND$Run
+
+ei_count_dat <- imap(ei_count_dat, function(x, y){
+  colnames(x) <- c("gene_id", y)
+  x
+})
+
+ris_count_dat <- imap(ris_count_dat, function(x, y){
+  colnames(x) <- c("gene_id", y)
+  x
+})
+
+ei_count_mat <- Reduce(function(x, y) {
+  inner_join(x, y, by = "gene_id")}, 
+  ei_count_dat)
+
+ris_count_mat <- Reduce(function(x, y) {
+  inner_join(x, y, by = "gene_id")}, 
+  ris_count_dat)
+
+ei_count_mat <- as.data.frame(ei_count_mat) %>% 
+  tibble::column_to_rownames("gene_id")
+ris_count_mat <- as.data.frame(ris_count_mat) %>% 
+  tibble::column_to_rownames("gene_id")
+```
+
+
+Run deseq with post-mzt v. pre-mzt
+```{r}
+ei_ddobj <- DESeqDataSetFromMatrix(ei_count_mat, 
+                                   pdata_split$EICHHORN,
+                                   ~ mzt)
+ei_ddobj <- DESeq(ei_ddobj)
+
+ris_ddobj <- DESeqDataSetFromMatrix(ris_count_mat, 
+                                   pdata_split$RISSLAND,
+                                   ~ mzt + strain_id)
+ris_ddobj <- DESeq(ris_ddobj)
+```
+
+plot ma
+
+```{r}
+ddojbs <- list(EICHORN = ei_ddobj,
+               RISSLAND = ris_ddobj)
+
+fc_res <- map_dfr(ddojbs, 
+                  ~results(.x, 
+                                       name = "mzt_zygotic_vs_maternal", 
+                                       tidy = T), 
+                  .id = "Experiment") %>% 
+  tbl_df() %>% 
+  mutate(count_type = ifelse(startsWith(row, "pre_"), 
+                        "intron",
+                        "exon"),
+         sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
+                      ifelse(padj < 0.05 & log2FoldChange < 0,
+                             "Down", "Not Sig"))) %>% 
+  filter(!is.na(sig))
+
+plts <- imap(split(fc_res, 
+           fc_res$Experiment), 
+    ~plot_ma(.x, .y))
+
+plt <- plot_grid(plotlist = plts)
+save_plot("both_ma_plot_featurecounts.pdf", plt, nrow = 1, ncol = 2)
+````
