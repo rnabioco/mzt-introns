@@ -115,16 +115,23 @@ gtf <- import(gtf)
 gtf <- as.data.frame(gtf)
 
 gtf_summary <- dplyr::filter(gtf, type == "exon") %>% 
-  dplyr::select(seqnames, start, end, strand, gene_id) %>% 
+  dplyr::select(seqnames, start, end, strand, 
+                exon_number, 
+                transcript_id, gene_id) %>% 
   dplyr::rename(chrom = seqnames) %>% 
   unique() %>% 
   group_by(gene_id) %>% 
-  bed_merge() %>% 
-  dplyr::summarize(total_exons = n())
+  mutate(max_exons = max(exon_number))
 
 monoexonic_genes <- dplyr::filter(gtf_summary, 
-                                  total_exons == 1) %>%
-  pull(gene_id)
+                                  max_exons == 1) %>%
+  pull(gene_id) %>% 
+  unique()
+
+monoexonic_transcripts <- dplyr::filter(gtf_summary, 
+                                  max_exons == 1) %>%
+  pull(transcript_id) %>% 
+  unique()
 ```
 
 
@@ -171,9 +178,9 @@ dat <- inner_join(dat,
                   mdata,
                   by = c("Run"))
 
-dat <- anti_join(dat, 
-                 data_frame(gene_id = monoexonic_genes),
-                 by = "gene_id")
+#dat <- anti_join(dat, 
+#                 data_frame(gene_id = monoexonic_genes),
+#                 by = "gene_id")
 
 fcount_dat <- group_by(dat, Run) %>% 
   mutate(lib_size = sum(counts),
@@ -182,6 +189,18 @@ fcount_dat <- group_by(dat, Run) %>%
   mutate(rate = log(counts) - log(eff_length),
          total_rates = log(sum(exp(rate))),
          TPM = exp(rate - total_rates + log(1e6)))
+
+# convert gene symbols to gene id
+gsymbol2gid <- gtf %>% 
+  tbl_df() %>% 
+  filter(type == "gene") %>%
+  dplyr::select(gene_id, gene_name) %>% 
+  unique()
+
+fcount_dat <- left_join(fcount_dat, gsymbol2gid, 
+                        by = c("gene_id" = "gene_name")) %>% 
+  dplyr::select(-gene_id) %>% 
+  dplyr::rename(gene_id = gene_id.y)
 
 fcount_dat$expt <- "featureCounts"
 ```
@@ -221,9 +240,23 @@ dat <- inner_join(dat,
                  mdata,
                 by = c("Run"))
 
-dat <- anti_join(dat, 
-                 data_frame(gene_id = monoexonic_genes),
-                 by = c("Name" = "gene_id"))
+
+# convert gene symbols to gene id
+#tx2gid <- gtf %>% 
+ # tbl_df() %>% 
+#  filter(type == "exon") %>%
+#  dplyr::select(gene_id, transcript_id) %>% 
+#  unique()
+
+#dat <- left_join(dat, tx2gid,
+#                 by = c("Name" = "transcript_id")) %>% 
+#  mutate(gene_id = ifelse(is.na(gene_id) & str_detect(Name, "^pre_"),
+#                          Name,
+#                          gene_id))
+
+#dat <- anti_join(dat, 
+#                 data_frame(gene_id = monoexonic_genes),
+#                 by = c("Name" = "gene_id"))
 
 # classify transcripts as primary or mature
 dat <- dat %>% 
@@ -246,7 +279,7 @@ dat <- left_join(dat, gene2tx,
                  by = c("Name" = "transcript_id")) %>% 
   dplyr::rename(transcript_id = Name)
 
-# add geneid attribute for pre_ annotations
+# add geneid attribute for pre_annotations
 salmon_dat <- mutate(dat, 
               gene_id = ifelse(count_type == "intron",
                                str_replace(transcript_id, "^pre_", ""),
@@ -256,7 +289,7 @@ salmon_dat <- mutate(dat,
 ```{r read_in_bt2_salmon}
 
 fa_types <- c(
-  #"primary_transcripts",
+  "primary_transcripts",
   "primary_transcripts_masked",
   "primary_transcripts_masked_exons"
 )
@@ -287,9 +320,9 @@ dat <- inner_join(dat,
                  mdata,
                 by = c("Run"))
 
-dat <- anti_join(dat, 
-                 data_frame(gene_id = monoexonic_genes),
-                 by = c("Name" = "gene_id"))
+#dat <- anti_join(dat, 
+#                 data_frame(gene_id = monoexonic_genes),
+#                 by = c("Name" = "gene_id"))
 
 # classify transcripts as primary or mature
 dat <- dat %>% 
@@ -325,10 +358,16 @@ bt2_dat$expt <- str_c("bt2_", bt2_dat$expt)
 ```{r}
 keep_cols <- intersect(colnames(salmon_dat), colnames(fcount_dat))
 
-fcount_dat <- fcount_dat[, keep_cols]
-salmon_dat <- salmon_dat[, keep_cols]
-bt2_dat <- bt2_dat[, keep_cols]
-dat <- bind_rows(list(salmon_dat, fcount_dat, bt2_dat))
+dat <- bind_rows(list(salmon_dat[, keep_cols], 
+                      fcount_dat[, keep_cols], 
+                      bt2_dat[, keep_cols]))
+
+keep_tx_cols <- append(keep_cols, "transcript_id")
+
+tpm_dat <- bind_rows(list(salmon_dat[, keep_tx_cols], 
+                      fcount_dat[, keep_cols], 
+                      bt2_dat[, keep_tx_cols]))
+
 ```
 
 ## plot pre_mRNA ratios
@@ -546,101 +585,6 @@ save_plot("ma_plots_introns.png",
           ncol = 2)
 ```
 
-```{r classify_txs_mzt, eval = F}
-## select transcripts with tpm > 0.5 as maternal
-
-mzt_class <- mutate(avg_abundance, 
-                    mzt_class = ifelse(pre_mzt > 0.1 & log2abundance > 1,
-                           "matzyg", 
-                           ifelse(pre_mzt <  0.1 & log2abundance > 0,
-                                  "zyg",
-                                  ifelse(pre_mzt > 0.1,
-                                         "mat", 
-                                         NA))))
-
-mzt_class <- dplyr::select(mzt_class, expt, gene_id, strain, count_type, mzt_class)    
-
-mzt_class <- spread(mzt_class, count_type, mzt_class)
-
-
-mzt_class <- filter(mzt_class, !(is.na(exon) & is.na(intron))) %>% 
-  mutate(mzt_class = ifelse(is.na(intron),
-                            exon,
-                            ifelse(is.na(exon),
-                                   intron,
-                                   ifelse(str_detect(intron, "zyg") & exon %in% c("mat", "matzyg"),
-                                          "matzyg",
-                                          ifelse(str_detect(intron, "zyg") & exon %in% c("zyg"),
-                                                 "zyg",
-                                                 NA)))))
-
-                       
-gene2tx <- gtf[, c("gene_id", "gene_name")]
-gene2tx <- unique(gene2tx)
-gene2tx <- na.omit(gene2tx)
-gene2tx <- as_data_frame(gene2tx)
-
-mzt_class <- left_join(mzt_class, gene2tx, by = "gene_id") %>% unique()
-```
-
-```{r, eval = F}
-if(!file.exists("eisen_data.tsv")){
-  download.file("https://ndownloader.figshare.com/files/400050",
-              "eisen_data.tsv")
-}
-edata <- read_tsv("eisen_data.tsv")
-
-```
-
-```{r, eval = F}
-
-cas_cols <- str_subset(colnames(edata), "cas")
-
-edata_confident <- edata[rowSums(edata[, cas_cols], na.rm = T) > 0 ,]
-
-res_eisen <- edata_confident %>% 
-  dplyr::select(NAME, CLASS)
-
-res_eisen <- inner_join(mzt_class, res_eisen, 
-            by = c("gene_name" = "NAME")) %>% 
-  dplyr::rename(kr_class = mzt_class,
-                eisen_class = CLASS)
-
-summary_dat <- res_eisen %>% 
- group_by(kr_class, eisen_class) %>% 
- summarize(n())
-
-summary_dat 
-
-classification_summary <- res_eisen %>% 
-  mutate(eisen_class = ifelse(is.na(eisen_class),
-                              "not classified",
-                              eisen_class),
-         kr_class = ifelse(is.na(kr_class),
-                                 "not classified",
-                                 kr_class),
-         kr_class = factor(kr_class,
-                           levels = c(
-                             "mat",
-                             "matzyg",
-                             "zyg",
-                             "not classified"
-                           )))
-
-
-plt <- ggplot(classification_summary, aes(kr_class)) +
-  geom_bar(aes(fill = eisen_class)) +
-  facet_wrap(~expt) +
-  labs(y = "# of genes", x = "intron based classification") +
-  scale_fill_brewer(palette = "Set1", 
-                    name = "SNP based\nclassification\n(Lott et al 2011)") +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
-
-plt
-
-save_plot("eisen_vs_intron_classification.pdf", plt,
-          base_height = 7)
-```
 
 
 ## alignment info
@@ -688,7 +632,7 @@ map(
 First read in salmon data into tximport
 ```{r}
 fa_types <- c(
-  #"primary_transcripts",
+  "primary_transcripts",
   "primary_transcripts_masked",
   "primary_transcripts_masked_exons"
 )
@@ -767,6 +711,9 @@ rs_ddobjs <- map(rs_tx_objs,
                 dds <- DESeq(dds)
                 dds
               })
+
+names(ei_ddobjs) <- fa_types
+names(rs_ddobjs) <- fa_types
 ```
 
 Extract results and make MA plots
@@ -806,7 +753,11 @@ plot_ma <- function(df, plt_title = NULL) {
   n_notsig <-
     nrow(dplyr::filter(df, sig == "Not Sig"))  %>%
     formatC(big.mark = ",")
-  
+  df <- mutate(df, 
+               sig = factor(sig, 
+                               levels = c("Down",
+                                          "Not Sig",
+                                          "Up")))
   pre_plot <- ggplot(df,
                      aes(baseMean,
                          log2FoldChange)) +
@@ -814,6 +765,7 @@ plot_ma <- function(df, plt_title = NULL) {
     scale_colour_viridis(
       discrete = TRUE,
       name = "",
+      drop = FALSE,
       labels = c(
         paste0("Significantly decreased (n = ", n_sig_down, ")"),
         paste0("Not Significant (n= ", n_notsig, ")"),
@@ -835,8 +787,8 @@ plot_ma <- function(df, plt_title = NULL) {
 }
 
 plts <- imap(split(ei_res, 
-           list(ris_res$fasta_type,
-                         ris_res$count_type)), 
+           list(ei_res$fasta_type,
+                         ei_res$count_type)), 
     ~plot_ma(.x, .y))
 
 plt <- plot_grid(plotlist = plts)
@@ -851,6 +803,10 @@ plts <- imap(split(ris_res,
 plt <- plot_grid(plotlist = plts)
 save_plot("rissland_ma_plot_salmon_bt2.pdf", plt, nrow = 2, ncol = 3)
 
+all_res <- bind_rows(list(EICHHORN = ei_res,
+               RISSLAND = ris_res),
+          .id = "experiment")
+all_res$method <- "salmon_bt2"
 ```
 
 ### Salmon direct alignment
@@ -1025,6 +981,14 @@ plts <- imap(split(ris_res,
 
 plt <- plot_grid(plotlist = plts)
 save_plot("rissland_ma_plot_salmon.pdf", plt, nrow = 2, ncol = 3)
+
+
+res <- bind_rows(list(EICHHORN = ei_res,
+               RISSLAND = ris_res),
+          .id = "experiment")
+res$method <- "salmon"
+
+all_res <- bind_rows(all_res, res)
 ```
 ### Featurecounts
 
@@ -1121,27 +1085,240 @@ ris_ddobj <- DESeq(ris_ddobj)
 plot ma
 
 ```{r}
-ddojbs <- list(EICHORN = ei_ddobj,
+ddojbs <- list(EICHHORN = ei_ddobj,
                RISSLAND = ris_ddobj)
 
-fc_res <- map_dfr(ddojbs, 
-                  ~results(.x, 
-                                       name = "mzt_zygotic_vs_maternal", 
-                                       tidy = T), 
-                  .id = "Experiment") %>% 
-  tbl_df() %>% 
-  mutate(count_type = ifelse(startsWith(row, "pre_"), 
+fc_res <- map_dfr(ddojbs,
+                  ~ results(.x,
+                            name = "mzt_zygotic_vs_maternal",
+                            tidy = T),
+                  .id = "Experiment") %>%
+  tbl_df() %>%
+  mutate(
+    count_type = ifelse(startsWith(row, "pre_"),
                         "intron",
                         "exon"),
-         sig = ifelse(padj < 0.05 & log2FoldChange > 0, "Up", 
-                      ifelse(padj < 0.05 & log2FoldChange < 0,
-                             "Down", "Not Sig"))) %>% 
+    sig = ifelse(
+      padj < 0.05 & log2FoldChange > 0,
+      "Up",
+      ifelse(padj < 0.05 & log2FoldChange < 0,
+             "Down", "Not Sig")
+    )
+  ) %>%
   filter(!is.na(sig))
 
 plts <- imap(split(fc_res, 
-           fc_res$Experiment), 
+           list(fc_res$Experiment,
+           fc_res$count_type)), 
     ~plot_ma(.x, .y))
 
 plt <- plot_grid(plotlist = plts)
-save_plot("both_ma_plot_featurecounts.pdf", plt, nrow = 1, ncol = 2)
-````
+save_plot("both_ma_plot_featurecounts.pdf", plt, nrow = 2, ncol = 2)
+
+res <- fc_res %>% dplyr::rename(experiment = Experiment)
+res$method <- "featurecounts"
+res$fasta_type <- "genome"
+res <- res[, colnames(all_res)]
+
+# convert gene symbols to gene id
+gsymbol2gid <- gtf %>% 
+  tbl_df() %>% 
+  filter(type == "gene") %>%
+  dplyr::select(gene_id, gene_name) %>% 
+  unique()
+
+res <- left_join(res, gsymbol2gid,
+                 by = c("row" = "gene_name")) %>% 
+  mutate(row = gene_id) %>% 
+  dplyr::select(-gene_id)
+
+all_res <- bind_rows(all_res, res)
+```
+
+### summarize results
+
+```{r}
+plt_dat <- filter(all_res, count_type == "intron")
+
+imap(split(plt_dat, plt_dat$experiment),
+    ~ggplot(.x, aes(method)) +
+  geom_bar(aes(fill = fasta_type), 
+           position = "dodge") +
+  facet_wrap(~sig, scales = "free_y") +
+  scale_fill_viridis_d(name = "") +
+  scale_y_continuous(labels = scales::comma) +
+  labs(x = "",
+       y = "Number of genes",
+       title = .y) +
+  theme(legend.pos = "top",
+        axis.text.x = element_text(angle = 90)))
+
+```
+## Compare to eisen data
+
+
+```{r classify_txs_mzt}
+
+mzt_status <- dplyr::select(pdata, study, Run, developmental_stage, mzt)
+
+## organize tpm data
+tpm_dat <- tpm_dat %>% 
+  left_join(mzt_status, by = c("study", 
+                               "Run", 
+                               "developmental_stage"))
+
+## sum up transcript TPMs to gene-level
+tpm_dat_summary <- group_by(tpm_dat,
+    expt,
+    Run,
+    study,
+    developmental_stage,
+    strain,
+    source_name,
+    count_type,
+    gene_id,
+    mzt) %>%
+  summarize(TPM = sum(TPM)) %>%
+  ungroup()
+
+tpm_dat_simple <- tpm_dat_summary %>% 
+  group_by(expt,
+    study,
+    count_type,
+    gene_id,
+    mzt) %>% 
+  summarize(mean_tpm = mean(TPM)) %>% 
+  ungroup()
+  
+tpm_dat_simple <- spread(tpm_dat_simple, mzt, mean_tpm)
+
+tpm_dat_simple <- mutate(tpm_dat_simple,
+                         method = ifelse(str_detect(expt, "bt2"),
+                                      "salmon_bt2",
+                                      ifelse(expt == "featureCounts",
+                                             "featurecounts",
+                                             "salmon")),
+                         fasta_type = str_replace(expt, "^bt2_", ""),
+                         fasta_type = ifelse(expt == "featureCounts",
+                                             "genome",
+                                             fasta_type)) %>% 
+  dplyr::select(-expt) %>% 
+  dplyr::rename(experiment = study)
+
+all_res_w_tpm <- left_join(all_res, tpm_dat_simple, 
+               by = c("experiment",
+                      "count_type",
+                      "row" = "gene_id",
+                      "method",
+                      "fasta_type")) %>% 
+  dplyr::rename(pre_mzt = maternal,
+                post_mzt = zygotic,
+                gene_id = row)
+
+all_res_w_tpm <- all_res_w_tpm %>% 
+  dplyr::select(-c(lfcSE, stat, pvalue, baseMean))
+```
+
+```{r}
+mzt_class <- mutate(all_res_w_tpm, 
+                    mzt_class = ifelse(pre_mzt > 0.1 & log2abundance > 1,
+                           "matzyg", 
+                           ifelse(pre_mzt <  0.1 & log2abundance > 0,
+                                  "zyg",
+                                  ifelse(pre_mzt > 0.1,
+                                         "mat", 
+                                         NA))))
+
+mzt_class <- dplyr::select(mzt_class, expt, gene_id, strain, count_type, mzt_class)    
+
+mzt_class <- spread(mzt_class, count_type, mzt_class)
+
+
+mzt_class <- filter(mzt_class, !(is.na(exon) & is.na(intron))) %>% 
+  mutate(mzt_class = ifelse(is.na(intron),
+                            exon,
+                            ifelse(is.na(exon),
+                                   intron,
+                                   ifelse(str_detect(intron, "zyg") & exon %in% c("mat", "matzyg"),
+                                          "matzyg",
+                                          ifelse(str_detect(intron, "zyg") & exon %in% c("zyg"),
+                                                 "zyg",
+                                                 NA)))))
+
+                       
+gene2tx <- gtf[, c("gene_id", "gene_name")]
+gene2tx <- unique(gene2tx)
+gene2tx <- na.omit(gene2tx)
+gene2tx <- as_data_frame(gene2tx)
+
+mzt_class <- left_join(mzt_class, gene2tx, by = "gene_id") %>% unique()
+```
+
+```{r, eval = F}
+if(!file.exists("eisen_data.tsv")){
+  download.file("https://ndownloader.figshare.com/files/400050",
+              "eisen_data.tsv")
+}
+edata <- read_tsv("eisen_data.tsv")
+
+```
+
+```{r, eval = F}
+
+cas_cols <- str_subset(colnames(edata), "cas")
+
+edata_confident <- edata[rowSums(edata[, cas_cols], na.rm = T) > 0 ,]
+
+res_eisen <- edata_confident %>% 
+  dplyr::select(NAME, CLASS)
+
+res_eisen <- inner_join(mzt_class, res_eisen, 
+            by = c("gene_name" = "NAME")) %>% 
+  dplyr::rename(kr_class = mzt_class,
+                eisen_class = CLASS)
+
+summary_dat <- res_eisen %>% 
+ group_by(kr_class, eisen_class) %>% 
+ summarize(n())
+
+summary_dat 
+
+classification_summary <- res_eisen %>% 
+  mutate(eisen_class = ifelse(is.na(eisen_class),
+                              "not classified",
+                              eisen_class),
+         kr_class = ifelse(is.na(kr_class),
+                                 "not classified",
+                                 kr_class),
+         kr_class = factor(kr_class,
+                           levels = c(
+                             "mat",
+                             "matzyg",
+                             "zyg",
+                             "not classified"
+                           )))
+
+
+plt <- ggplot(classification_summary, aes(kr_class)) +
+  geom_bar(aes(fill = eisen_class)) +
+  facet_wrap(~expt) +
+  labs(y = "# of genes", x = "intron based classification") +
+  scale_fill_brewer(palette = "Set1", 
+                    name = "SNP based\nclassification\n(Lott et al 2011)") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+plt
+
+save_plot("eisen_vs_intron_classification.pdf", plt,
+          base_height = 7)
+```
+
+
+
+
+
+
+
+
+
+
