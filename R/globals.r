@@ -20,6 +20,8 @@ library(tximport)
 library(DESeq2)
 library(tibble)
 library(here)
+library(kentr)
+library(ggrepel)
 #### Paths ####
 
 project_dir <- here()
@@ -30,3 +32,5 @@ db_dir <- file.path(project_dir, "dbases")
 
 #### functions ####
 source(file.path(project_dir, "R", "utils.r"))
+
+ggplot2::theme_set(theme_cowplot())

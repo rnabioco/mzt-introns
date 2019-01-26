@@ -132,6 +132,7 @@ monoexonic_transcripts <- dplyr::filter(gtf_summary,
                                   max_exons == 1) %>%
   pull(transcript_id) %>% 
   unique()
+
 ```
 
 
@@ -149,7 +150,7 @@ count_files <- dir(count_data_dir,
 
 sample_names <- str_split(count_files, "\\/") %>% 
   map_chr(., ~.x[10]) %>% 
-  str_replace(., "_counts.tsv", "") 
+  str_replace(., "_counts.tsv", "")  
 
 sample_names_simple <- str_replace(sample_names, "_exon|_intron", "")
  
@@ -184,9 +185,8 @@ dat <- inner_join(dat,
 
 fcount_dat <- group_by(dat, Run) %>% 
   mutate(lib_size = sum(counts),
-         eff_length = as.numeric(length) - 150 + 1) %>% 
-  filter(eff_length > 0 ) %>% 
-  mutate(rate = log(counts) - log(eff_length),
+         length = as.numeric(length)) %>% 
+  mutate(rate = log(counts) - log(length),
          total_rates = log(sum(exp(rate))),
          TPM = exp(rate - total_rates + log(1e6)))
 
@@ -369,223 +369,6 @@ tpm_dat <- bind_rows(list(salmon_dat[, keep_tx_cols],
                       bt2_dat[, keep_tx_cols]))
 
 ```
-
-## plot pre_mRNA ratios
-
-```{r, calc_premRNA}
-# sum primary and mature TPMs for each gene 
-summary_dat <- dplyr::select(dat, 
-                             expt,
-                             TPM, 
-                             gene_id, 
-              Run, 
-              count_type, 
-              developmental_stage,
-              study, 
-              strain) %>% 
-  group_by(expt,
-           gene_id, 
-           Run, 
-           developmental_stage, 
-           count_type,
-           strain) %>% 
-  dplyr::summarize(total_tpm = sum(TPM, 
-                                   na.rm = F)) %>% 
-  ungroup() 
-
-## calc primary ratio
-tpm_summary <- summary_dat %>% 
-  spread(count_type, total_tpm, fill = 0) %>% 
-  mutate(primary_ratio  = intron / (intron + exon))
-
-
-## calc mean primary ratio
-tpm_means <- tpm_summary %>%  
-  filter(!is.na(primary_ratio)) %>% 
-  group_by(expt,
-           gene_id, 
-           developmental_stage,
-           strain) %>% 
-  summarize(mean_primary = mean(primary_ratio,
-                                na.rm = T)) 
-  
-tpm_means <- ungroup(tpm_means)
-
-tpm_means <- mutate(tpm_means, 
-                       developmental_stage = factor(developmental_stage, 
-                                         levels = c(
-                                           "Stage 11 oocyte",
-                                           "Stage 12 oocyte",
-                                           "Stage 13 oocyte",
-                                           "Stage 14 oocyte",
-                                           "Activated egg",
-                                           "0-1 hr embryo",
-                                           "1-2 hr embryo",
-                                           "2-3 hr embryo",
-                                           "3-4 hr embryo",
-                                           "4-5 hr embryo",
-                                           "5-6 hr embryo")
-                                         )
-                       )
-
-tpm_means <- mutate(tpm_means,
-                       strain = ifelse(strain == "wt",
-                                       paste(strain, 
-                                             "(Eichhorn)"),
-                                       paste(strain,
-                                             "(Rissland)")))
-                                        
-```
-
-```{r plt_it}
-
-plt_dat <- split(tpm_means, tpm_means$expt)
-
-plts <- imap(plt_dat, 
-  ~ggplot(.x, 
-       aes(developmental_stage, mean_primary)) +
-  geom_boxplot(aes(fill = developmental_stage), 
-               outlier.shape = NA,
-               coef = 1e11) + 
-  facet_grid(~strain, 
-             scale = "free") +
-  labs(x = "",
-       y = expression(frac("pre-mRNA TPM", 
-                           "mature + pre-mRNA TPM")),
-       title = .y) +
-  scale_fill_brewer(palette = "Paired",
-                    name = "Transcript Type",
-                    breaks = c("pre", "mature"),
-                    labels = c("pre-mRNA", "mature-mRNA")) +
-  theme(
-    axis.text.x = element_text(angle = 90,
-                               vjust = 0.5,
-                               hjust = 0.5),
-    strip.text = element_text(size = 8)
-  )
-)
-
-plt <- plot_grid(plotlist = plts, nrow = 4, ncol = 2)
-plt
-
-save_plot("exon_intron_boxplt-pre-mRNA-ratios.pdf", 
-          plt, 
-          base_width = 6,
-          base_height = 4.5,
-          nrow = 4,
-          ncol = 2)
-
-```
-
-## Classify transcripts into maternal or zygotic
-
-Next I'll try to classify transcripts into catagories based upon their abundance changes throughout embryogenesis. 
-
-```{r}
-pre_mzt <- c(
-  "Stage 11 oocyte",
-  "Stage 12 oocyte",
-  "Stage 13 oocyte",
-  "Stage 14 oocyte",
-  "Activated egg",
-  "0-1 hr embryo",
-  "1-2 hr embryo"
-  )
-post_mzt <- c("2-3 hr embryo",
-  "3-4 hr embryo",
-  "4-5 hr embryo",
-  "5-6 hr embryo")
-
-# average pre and post MZT TPMs
-avg_abundance <- summary_dat %>% 
-  mutate(mzt = ifelse(developmental_stage %in% pre_mzt,
-                      "pre_mzt",
-                      "post_mzt")) %>% 
-  group_by(expt, gene_id, strain, mzt, count_type) %>% 
-  summarize(mean_mzt_expr = mean(total_tpm)) %>% 
-  group_by(expt, gene_id, strain, count_type) %>% 
-  mutate(mean_abundance = mean(mean_mzt_expr))
-
-avg_abundance <- avg_abundance %>% 
-  ungroup() %>% 
-  spread(mzt, mean_mzt_expr) %>% 
-  mutate(log2mzt = log2(post_mzt + 1) - log2(pre_mzt + 1))
-
-plt_dat <- mutate(avg_abundance,
-                  mean_abundance = log2(mean_abundance + 1))
-```
-
-```{r}
-# plot MAs per expt.
-
-plt_dat_exons <- filter(plt_dat, count_type == "exon") 
-
-plt_dat_exons <- split(plt_dat_exons, plt_dat_exons$expt)
-
-plts <- imap(plt_dat_exons, 
-  ~ggplot(.x, 
-       aes(mean_abundance, log2mzt)) +
-  geom_point(size = 0.1) + 
-  facet_grid(~strain, 
-             scale = "free") +
-  labs(x = "mean abundance (log 10)",
-       y = expression(frac("post-mzt", 
-                           "pre-mzt")),
-       title = .y) +
-  theme(
-    axis.text.x = element_text(angle = 90,
-                               vjust = 0.5,
-                               hjust = 0.5),
-    strip.text = element_text(size = 8)
-  )
-)
-
-plt <- plot_grid(plotlist = plts, nrow = 3, ncol = 2)
-
-save_plot("ma_plots_exons.png", 
-          plt, 
-          base_width = 6,
-          base_height = 4.5,
-          nrow = 3,
-          ncol = 2)
-
-
-## intronic
-
-plt_dat_introns <- filter(plt_dat, count_type == "intron") 
-
-plt_dat_introns <- split(plt_dat_introns,
-                         plt_dat_introns$expt)
-
-plts <- imap(plt_dat_introns, 
-  ~ggplot(.x, 
-       aes(mean_abundance, log2mzt)) +
-  geom_point(size = 0.1) + 
-  facet_grid(~strain, 
-             scale = "free") +
-  labs(x = "",
-       y = expression(frac("post-mzt", 
-                           "pre-mzt")),
-       title = .y) +
-  theme(
-    axis.text.x = element_text(angle = 90,
-                               vjust = 0.5,
-                               hjust = 0.5),
-    strip.text = element_text(size = 8)
-  )
-)
-
-plt <- plot_grid(plotlist = plts, nrow = 3, ncol = 2)
-
-save_plot("ma_plots_introns.png", 
-          plt, 
-          base_width = 6,
-          base_height = 4.5,
-          nrow = 3,
-          ncol = 2)
-```
-
-
 
 ## alignment info
 
@@ -905,7 +688,8 @@ Extract results and make MA plots
 ```{r}
 ei_res <- map_dfr(ei_ddobjs, ~results(.x, 
                                        name = "mzt_zygotic_vs_maternal", 
-                                       tidy = T), .id = "fasta_type") %>% 
+                                       tidy = T), 
+                  .id = "fasta_type") %>% 
   tbl_df() %>% 
   mutate(count_type = ifelse(startsWith(row, "pre_"), 
                         "intron",
@@ -917,7 +701,8 @@ ei_res <- map_dfr(ei_ddobjs, ~results(.x,
 
 ris_res <- map_dfr(rs_ddobjs, ~results(.x, 
                                        name = "mzt_zygotic_vs_maternal", 
-                                       tidy = T), .id = "fasta_type") %>% 
+                                       tidy = T), 
+                   .id = "fasta_type") %>% 
   tbl_df() %>% 
   mutate(count_type = ifelse(startsWith(row, "pre_"), 
                         "intron",
@@ -929,42 +714,42 @@ ris_res <- map_dfr(rs_ddobjs, ~results(.x,
 
 
 
-plot_ma <- function(df, plt_title = NULL) {
-  n_sig_up <- nrow(dplyr::filter(df, sig == "Up")) %>%
-    formatC(big.mark = ",")
-  n_sig_down <-
-    nrow(dplyr::filter(df, sig == "Down"))  %>%
-    formatC(big.mark = ",")
-  n_notsig <-
-    nrow(dplyr::filter(df, sig == "Not Sig"))  %>%
-    formatC(big.mark = ",")
-  
-  pre_plot <- ggplot(df,
-                     aes(baseMean,
-                         log2FoldChange)) +
-    geom_point(aes(colour = sig), size = 0.1) +
-    scale_colour_viridis(
-      discrete = TRUE,
-      name = "",
-      labels = c(
-        paste0("Significantly decreased (n = ", n_sig_down, ")"),
-        paste0("Not Significant (n= ", n_notsig, ")"),
-        paste0("Significantly increased (n = ", n_sig_up, ")")
-      )
-    ) +
-    facet_wrap(~count_type) +
-    scale_x_log10() +
-    labs(x = "Average Expression",
-         y = expression(paste("log"[2], " ", frac(
-           "Post-MZT", "Pre-MZT"
-         ))),
-         title = plt_title) +
-    guides(colour = guide_legend(nrow = 3,
-                                 override.aes = list(size = 3))) +
-    theme(legend.position = "top")
-  
-  pre_plot
-}
+# plot_ma <- function(df, plt_title = NULL) {
+#   n_sig_up <- nrow(dplyr::filter(df, sig == "Up")) %>%
+#     formatC(big.mark = ",")
+#   n_sig_down <-
+#     nrow(dplyr::filter(df, sig == "Down"))  %>%
+#     formatC(big.mark = ",")
+#   n_notsig <-
+#     nrow(dplyr::filter(df, sig == "Not Sig"))  %>%
+#     formatC(big.mark = ",")
+#   
+#   pre_plot <- ggplot(df,
+#                      aes(baseMean,
+#                          log2FoldChange)) +
+#     geom_point(aes(colour = sig), size = 0.1) +
+#     scale_colour_viridis(
+#       discrete = TRUE,
+#       name = "",
+#       labels = c(
+#         paste0("Significantly decreased (n = ", n_sig_down, ")"),
+#         paste0("Not Significant (n= ", n_notsig, ")"),
+#         paste0("Significantly increased (n = ", n_sig_up, ")")
+#       )
+#     ) +
+#     facet_wrap(~count_type) +
+#     scale_x_log10() +
+#     labs(x = "Average Expression",
+#          y = expression(paste("log"[2], " ", frac(
+#            "Post-MZT", "Pre-MZT"
+#          ))),
+#          title = plt_title) +
+#     guides(colour = guide_legend(nrow = 3,
+#                                  override.aes = list(size = 3))) +
+#     theme(legend.position = "top")
+#   
+#   pre_plot
+# }
 
 plts <- imap(split(ei_res, 
            list(ei_res$fasta_type,
@@ -1120,6 +905,12 @@ res$method <- "featurecounts"
 res$fasta_type <- "genome"
 res <- res[, colnames(all_res)]
 
+# remove pre annotation from gene symbols for intron counts
+res <- mutate(res, 
+              row = ifelse(count_type == "intron",
+                           str_replace(row, "^pre_", ""),
+                           row))
+
 # convert gene symbols to gene id
 gsymbol2gid <- gtf %>% 
   tbl_df() %>% 
@@ -1140,7 +931,7 @@ all_res <- bind_rows(all_res, res)
 ```{r}
 plt_dat <- filter(all_res, count_type == "intron")
 
-imap(split(plt_dat, plt_dat$experiment),
+plts <- imap(split(plt_dat, plt_dat$experiment),
     ~ggplot(.x, aes(method)) +
   geom_bar(aes(fill = fasta_type), 
            position = "dodge") +
@@ -1150,10 +941,53 @@ imap(split(plt_dat, plt_dat$experiment),
   labs(x = "",
        y = "Number of genes",
        title = .y) +
-  theme(legend.pos = "top",
+  theme(legend.pos = "right",
         axis.text.x = element_text(angle = 90)))
 
+plt <- plot_grid(plotlist = plts, nrow = 2, ncol = 1)
+
+save_plot("sig_intron_summary.pdf", plt, nrow = 2, base_aspect_ratio = 2.5)
+plt
 ```
+
+
+```{r}
+gene_lists <- split(plt_dat, 
+                    list(plt_dat$experiment)) %>%
+  map(., ~split(.x, .x$sig)) %>% 
+  at_depth(., 2, ~split(.x, list(.x$method, .x$fasta_type))) %>% 
+  at_depth(., 3, ~dplyr::pull(.x, row) %>% 
+             ifelse(str_detect(., "^pre_"),
+                    .,
+                    str_c("pre_", .)))  %>% 
+  modify_depth(., 3, ~.x[length(.x) > 0])
+  
+library(UpSetR)
+
+to_plot <- c("featurecounts.genome",
+             "salmon.primary_transcripts",
+             "salmon_bt2.primary_transcripts",
+             "salmon.primary_transcripts_masked",
+             "salmon_bt2.primary_transcripts_masked",
+             "salmon.primary_transcripts_masked_exons",
+             "salmon_bt2.primary_transcripts_masked_exons")
+
+iwalk(gene_lists,
+    function(expt, name){
+      iwalk(expt, 
+           function(x, id){
+              pdf(paste0("de_overlap_", name, "_", id, ".pdf"))
+             sets_to_plot <- to_plot[to_plot %in% names(x)]
+             upset(fromList(x), sets = sets_to_plot, 
+                   nsets = length(x), 
+                   nintersects = 20, order.by = "freq")
+             dev.off()
+           })
+    })
+
+
+```
+
 ## Compare to eisen data
 
 
@@ -1190,7 +1024,6 @@ tpm_dat_simple <- tpm_dat_summary %>%
   summarize(mean_tpm = mean(TPM)) %>% 
   ungroup()
   
-tpm_dat_simple <- spread(tpm_dat_simple, mzt, mean_tpm)
 
 tpm_dat_simple <- mutate(tpm_dat_simple,
                          method = ifelse(str_detect(expt, "bt2"),
@@ -1205,7 +1038,17 @@ tpm_dat_simple <- mutate(tpm_dat_simple,
   dplyr::select(-expt) %>% 
   dplyr::rename(experiment = study)
 
-all_res_w_tpm <- left_join(all_res, tpm_dat_simple, 
+tpm_dat_simple <- spread(tpm_dat_simple, mzt, mean_tpm)
+
+# fix gene_ids to remove pre_ prefix if it exists
+all_res_simple <- all_res %>% 
+  dplyr::select(-c(lfcSE, stat, pvalue, baseMean)) %>% 
+  mutate(row = ifelse(count_type == "intron",
+                     str_replace(row, "^pre_", ""),
+                     row))
+  
+
+all_res_w_tpm <- left_join(all_res_simple, tpm_dat_simple, 
                by = c("experiment",
                       "count_type",
                       "row" = "gene_id",
@@ -1215,35 +1058,53 @@ all_res_w_tpm <- left_join(all_res, tpm_dat_simple,
                 post_mzt = zygotic,
                 gene_id = row)
 
-all_res_w_tpm <- all_res_w_tpm %>% 
-  dplyr::select(-c(lfcSE, stat, pvalue, baseMean))
+
 ```
 
 ```{r}
-mzt_class <- mutate(all_res_w_tpm, 
-                    mzt_class = ifelse(pre_mzt > 0.1 & log2abundance > 1,
+
+mzt_class_w_tpm <- mutate(all_res_w_tpm, 
+                    mzt_class = ifelse(pre_mzt > 1 & 
+                                         log2FoldChange > 0 &
+                                         padj < 0.05,
                            "matzyg", 
-                           ifelse(pre_mzt <  0.1 & log2abundance > 0,
+                           ifelse(pre_mzt <= 1 & 
+                                    log2FoldChange > 0 &
+                                    padj < 0.05,
                                   "zyg",
-                                  ifelse(pre_mzt > 0.1,
+                                  ifelse(pre_mzt > 1,
                                          "mat", 
                                          NA))))
 
-mzt_class <- dplyr::select(mzt_class, expt, gene_id, strain, count_type, mzt_class)    
+mzt_class <- dplyr::select(mzt_class_w_tpm, 
+                           experiment, 
+                           fasta_type,
+                           gene_id,
+                           count_type, 
+                           method,
+                           mzt_class)    
 
 mzt_class <- spread(mzt_class, count_type, mzt_class)
 
 
-mzt_class <- filter(mzt_class, !(is.na(exon) & is.na(intron))) %>% 
+mzt_class <- filter(mzt_class, !(is.na(exon) & is.na(intron))) %>%
   mutate(mzt_class = ifelse(is.na(intron),
                             exon,
-                            ifelse(is.na(exon),
-                                   intron,
-                                   ifelse(str_detect(intron, "zyg") & exon %in% c("mat", "matzyg"),
-                                          "matzyg",
-                                          ifelse(str_detect(intron, "zyg") & exon %in% c("zyg"),
-                                                 "zyg",
-                                                 NA)))))
+                            ifelse(
+                              is.na(exon),
+                              intron,
+                              ifelse(
+                                str_detect(intron,
+                                           "zyg") &
+                                  exon %in% c("mat",
+                                              "matzyg"),
+                                "matzyg",
+                                ifelse(intron == "zyg" &
+                                        exon == "zyg",
+                                       "zyg",
+                                       NA)
+                              )
+                            )))
 
                        
 gene2tx <- gtf[, c("gene_id", "gene_name")]
@@ -1251,19 +1112,23 @@ gene2tx <- unique(gene2tx)
 gene2tx <- na.omit(gene2tx)
 gene2tx <- as_data_frame(gene2tx)
 
-mzt_class <- left_join(mzt_class, gene2tx, by = "gene_id") %>% unique()
+mzt_class <- left_join(mzt_class, gene2tx, by = "gene_id") %>% 
+  unique()
+
+mzt_class %>% 
+  group_by(experiment, fasta_type, method, mzt_class) %>% 
+  summarize(n())
 ```
 
-```{r, eval = F}
-if(!file.exists("eisen_data.tsv")){
-  download.file("https://ndownloader.figshare.com/files/400050",
+```{r}
+download.file("https://ndownloader.figshare.com/files/400050",
               "eisen_data.tsv")
-}
+
 edata <- read_tsv("eisen_data.tsv")
 
 ```
 
-```{r, eval = F}
+```{r}
 
 cas_cols <- str_subset(colnames(edata), "cas")
 
@@ -1278,10 +1143,10 @@ res_eisen <- inner_join(mzt_class, res_eisen,
                 eisen_class = CLASS)
 
 summary_dat <- res_eisen %>% 
- group_by(kr_class, eisen_class) %>% 
+ group_by(kr_class, eisen_class,
+          experiment, fasta_type, method) %>% 
  summarize(n())
 
-summary_dat 
 
 classification_summary <- res_eisen %>% 
   mutate(eisen_class = ifelse(is.na(eisen_class),
@@ -1298,27 +1163,576 @@ classification_summary <- res_eisen %>%
                              "not classified"
                            )))
 
+classification_summary <- classification_summary %>% 
+  filter(!gene_id %in% monoexonic_genes)
 
-plt <- ggplot(classification_summary, aes(kr_class)) +
+eichhorn_res <- filter(classification_summary, 
+                       experiment == "EICHHORN")
+rissland_res <- filter(classification_summary, 
+                       experiment == "RISSLAND")
+
+plt <- ggplot(eichhorn_res, aes(kr_class)) +
   geom_bar(aes(fill = eisen_class)) +
-  facet_wrap(~expt) +
-  labs(y = "# of genes", x = "intron based classification") +
+  facet_grid(method~fasta_type) +
+  labs(y = "# of genes", 
+       x = "intron based classification") +
   scale_fill_brewer(palette = "Set1", 
                     name = "SNP based\nclassification\n(Lott et al 2011)") +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 1, 
+                                   vjust = 0.5))
 
 plt
 
-save_plot("eisen_vs_intron_classification.pdf", plt,
+save_plot("eisen_vs_eichhorn_classification.pdf", plt,
+          base_height = 7, base_aspect_ratio = 1.75)
+
+plt <- ggplot(rissland_res, aes(kr_class)) +
+  geom_bar(aes(fill = eisen_class)) +
+  facet_grid(method~fasta_type) +
+  labs(y = "# of genes", 
+       x = "intron based classification") +
+  scale_fill_brewer(palette = "Set1", 
+                    name = "SNP based\nclassification\n(Lott et al 2011)") +
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 1, 
+                                   vjust = 0.5))
+
+save_plot("eisen_vs_rissland_classification.pdf", plt,
+          base_height = 7, base_aspect_ratio = 1.75)
+
+plt <- ggplot(rissland_res, aes(exon)) +
+  geom_bar(aes(fill = eisen_class)) +
+  facet_grid(method~fasta_type) +
+  labs(y = "# of genes", 
+       x = "intron based classification") +
+  scale_fill_brewer(palette = "Set1", 
+                    name = "SNP based\nclassification\n(Lott et al 2011)") +
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 1, 
+                                   vjust = 0.5))
+
+save_plot("eisen_vs_rissland_classification_by_exon.pdf", plt,
+          base_height = 7, base_aspect_ratio = 1.75)
+
+
+plt <- ggplot(rissland_res, aes(intron)) +
+  geom_bar(aes(fill = eisen_class)) +
+  facet_grid(method~fasta_type) +
+  labs(y = "# of genes", 
+       x = "intron based classification") +
+  scale_fill_brewer(palette = "Set1", 
+                    name = "SNP based\nclassification\n(Lott et al 2011)") +
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 1, 
+                                   vjust = 0.5))
+
+save_plot("eisen_vs_rissland_classification_by_intron.pdf", plt,
+          base_height = 7, base_aspect_ratio = 1.75)
+
+plt <- ggplot(edata_confident, aes(CLASS)) +
+  geom_bar(aes(fill = CLASS)) +
+  labs(y = "# of genes", 
+       x = "") +
+  scale_fill_brewer(palette = "Set1", 
+                    name = "SNP based\nclassification\n(Lott et al 2011)") +
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 1, 
+                                   vjust = 0.5))
+
+save_plot("eisen_classification.pdf", plt,
           base_height = 7)
+plt
 ```
 
 
+## Plot out TPMs for Eisen classes
+
+```{r tidy_eisen}
+tidy_eisen <- gather(edata_confident, genotype, expr, 
+                     -c(NAME:`F:M SLOPE`)) %>% 
+  filter(str_detect(genotype, "^w1_|^cas_" )) %>% 
+  separate(genotype, c("strain", "timepoint"), sep = "_") %>% 
+  separate(timepoint, c("sex", "timepoint"), sep = 1) %>% 
+  group_by(CLASS, NAME, strain, timepoint) %>% 
+  summarize(expr = mean(expr)) 
+```
+
+Next plot out a few genes to verify that patterns are the same as the paper.
+```{r}
+
+pub_genes <- c(
+  "Adh", # maternal
+  "aur",
+  "Nap1",
+  "Neu3", # maternal and zygo
+  "foi",
+  "casp",
+  "Bro", # zygotic
+  "SCNF",
+  "corn"
+)
+
+tmp <- filter(tidy_eisen, NAME %in% pub_genes)
+plt <- ggplot(tmp, aes(timepoint, expr)) +
+  geom_point(aes(color = strain)) +
+  scale_color_brewer(palette = "Set1") +
+  facet_wrap(~NAME + CLASS, scales = "free_y", nrow = 3) +
+  labs(y = "Expression")
+plt
+save_plot("eisen_example_genes.pdf", plt, base_height = 7, base_aspect_ratio = 1.)
+
+tmp <- filter(tidy_eisen, !is.na(CLASS)) %>% 
+  group_by(., timepoint, CLASS, strain) %>% 
+  summarize(expr = mean(expr))
+ggplot(tmp, aes(timepoint, expr)) +
+  geom_point(aes(color = strain)) +
+  facet_wrap(~CLASS, scales = "free_y") +
+  labs(y = "Avg. Expression")
+
+
+group_by(tidy_eisen, timepoint, CLASS, strain) %>% 
+  summarize(min(expr), max(expr))
+
+eisen_rissland <- left_join(tidy_eisen, rissland_res,
+                            by = c("NAME" = "gene_name")) %>% 
+  filter(!(is.na(CLASS) | kr_class == "not classified"))
+
+tmp <- filter(eisen_rissland, !is.na(kr_class)) %>% 
+  group_by(timepoint, kr_class, strain) %>% 
+  summarize(expr = mean(expr))
+plt1 <- ggplot(tmp, aes(timepoint, expr)) +
+  geom_point(aes(color = strain)) +
+    scale_color_brewer(palette = "Set1") +
+  facet_wrap(~kr_class, scales = "free_y") +
+  labs(title = "intron classification",
+       y = "Avg. Expression")
+
+tmp <- group_by(eisen_rissland, timepoint, CLASS, strain) %>% 
+  summarize(expr = mean(expr))
+plt2 <- ggplot(tmp, aes(timepoint, expr)) +
+  geom_point(aes(color = strain)) +
+    scale_color_brewer(palette = "Set1") +
+  facet_wrap(~CLASS, scales = "free_y") +
+  labs(title = "eisen classification",
+       y = "Avg. Expression")
+
+plt <- plot_grid(plt1, plt2, nrow = 2)
+save_plot("compare_classes.pdf", plt, nrow = 2, base_aspect_ratio = 2.33)
+plt
+```
+
+
+```{r}
+eisen_gene_annotation <- edata_confident %>% 
+  dplyr::select(NAME, CLASS) %>% 
+  unique()
+
+kr_class <- dplyr::select(classification_summary, 
+                          experiment, 
+                          fasta_type, 
+                          gene_id, gene_name, 
+                          method) %>% 
+  unique()
+
+tpms <- left_join(tpm_dat_summary, gsymbol2gid)
+tpms_simple <- mutate(tpms,
+                         method = ifelse(str_detect(expt, "bt2"),
+                                      "salmon_bt2",
+                                      ifelse(expt == "featureCounts",
+                                             "featurecounts",
+                                             "salmon")),
+                         fasta_type = str_replace(expt, "^bt2_", ""),
+                         fasta_type = ifelse(expt == "featureCounts",
+                                             "genome",
+                                             fasta_type)) %>% 
+  dplyr::select(-expt) %>% 
+  dplyr::rename(experiment = study)
+
+tpm_class <- left_join(tpms_simple, 
+                       kr_class, 
+                       c("gene_id",
+                         "gene_name",
+                         "experiment",
+                         "method",
+                         "fasta_type"))
+
+tpm_class <- left_join(tpm_class, mzt_class)
+tpm_class <- left_join(tpm_class, 
+                       ungroup(tidy_eisen) %>% select(CLASS, NAME) %>% unique(), by = c("gene_name" = "NAME"))
+#tpm_class <- filter(tpm_class, 
+#                    !is.na(CLASS))
+
+tpm_class <- mutate(tpm_class, 
+                       developmental_stage = factor(developmental_stage, 
+                                         levels = c(
+                                           "Stage 11 oocyte",
+                                           "Stage 12 oocyte",
+                                           "Stage 13 oocyte",
+                                           "Stage 14 oocyte",
+                                           "Activated egg",
+                                           "0-1 hr embryo",
+                                           "1-2 hr embryo",
+                                           "2-3 hr embryo",
+                                           "3-4 hr embryo",
+                                           "4-5 hr embryo",
+                                           "5-6 hr embryo")
+                                         )
+                       )
+
+
+tpm_filtered <- tpm_class %>% 
+    filter(experiment == "RISSLAND",
+           method == "salmon_bt2", 
+           fasta_type == "primary_transcripts_masked") 
+
+tmp <- tpm_filtered %>% 
+  filter(gene_name %in% pub_genes) %>% 
+  group_by(developmental_stage, count_type, CLASS, mzt_class, gene_name) %>% 
+  summarize(TPM = mean(TPM)) 
+
+ggplot(tmp,
+       aes(developmental_stage, TPM)) +
+  geom_point(aes(color = count_type)) +
+  facet_wrap(~gene_name + CLASS + mzt_class, scales = "free_y") +
+  theme(axis.text.x = element_text(angle = 90))
 
 
 
+tmp <- filter(tpm_filtered) %>% 
+  group_by(developmental_stage, count_type, CLASS) %>% 
+  summarize(expr = mean(TPM))
+plt1 <- ggplot(tmp, aes(developmental_stage, expr)) +
+  geom_point(aes(color = count_type)) +
+    scale_color_brewer(palette = "Set1") +
+  facet_wrap(~CLASS, scales = "free_y") +
+  labs(title = "eisen classification",
+       y = "Avg. Expression")
+
+tmp <- group_by(tpm_filtered, 
+                developmental_stage, count_type, mzt_class) %>% 
+  summarize(expr = mean(TPM))
+plt2 <- ggplot(tmp, aes(developmental_stage, expr)) +
+  geom_point(aes(color = count_type)) +
+  scale_color_brewer(palette = "Set1") +
+  facet_wrap(~mzt_class, scales = "free_y") +
+  labs(title = "intron classification",
+       y = "Avg. Expression")
+
+plt <- plot_grid(plt1, plt2, nrow = 2)
+save_plot("compare_classes_rissland.pdf", plt, nrow = 2, base_aspect_ratio = 2.33)
+plt
+```
 
 
+## Try new classification
+
+```{r}
+url_name <- "https://datadryad.org/bitstream/handle/10255/dryad.52325/supplemental_file_1.xlsx?sequence=1"
+
+fn_name <- "supplemental_file_1.xlsx"
+download.file(url_name, fn_name)
+pol2chip_dat <- readxl::read_excel(fn_name, sheet = 2)
+
+matzyg_classification <- filter(pol2chip_dat, !is.na(MBT_group)) %>% 
+  dplyr::select(gene_id = fb_gene_id, 
+                gene_name = fb_symbol, 
+                MBT_group)
+
+res_eisen_reclass <- edata_confident %>% 
+  dplyr::select(NAME, CLASS)
+
+res_eisen_reclass <- left_join(res_eisen_reclass,
+                               matzyg_classification, 
+                               by = c("NAME" = "gene_name"))
+
+res_eisen_reclass <- mutate(res_eisen_reclass,
+                            new_class = ifelse(!is.na(MBT_group) & 
+                                                 CLASS == "mat",
+                                               "matzyg",
+                                               CLASS)) %>% 
+  dplyr::select(NAME, new_class)
+
+eisen_tpm_dat <- left_join(eisen_rissland, res_eisen_reclass, by = "NAME")
+rissland_tpm_dat <- left_join(tpm_filtered, res_eisen_reclass, 
+                              by = c("gene_name" = "NAME"))
+
+## combine cas and w1 values and generate a matrix for vis.
+eisen_mat <- eisen_tpm_dat %>% 
+  select(NAME, timepoint, strain, expr) %>% 
+  unique() %>% 
+  group_by(timepoint, NAME) %>% 
+  summarize(expr = sum(expr)) %>% 
+  spread(timepoint, expr) %>% 
+  as.data.frame() %>% 
+  tibble::column_to_rownames("NAME") %>% 
+  as.matrix()  
+eisen_mat <- log10(eisen_mat + 1)
+
+eisen_mat_classes <- eisen_tpm_dat %>% 
+  ungroup() %>% 
+  select(new_class, CLASS, NAME) %>% 
+  unique() %>% 
+  left_join(data_frame(NAME = rownames(eisen_mat)), # reorder to match matrix above
+            ., by = "NAME")
+  
+Heatmap(eisen_mat, 
+        show_row_dend = FALSE, 
+        show_column_dend = FALSE,
+        cluster_columns = FALSE,
+        show_row_names = FALSE,
+        split = eisen_mat_classes$CLASS)
+
+## Note that the RPKM values in the supplement are similar but do not match the RPKM values in the GEO repository.
+
+```
 
 
+```{r}
+rs_exon_intron_comp <- rissland_tpm_dat %>% 
+  group_by(gene_name, developmental_stage, count_type) %>% #average replicate timepoints
+  summarize(TPM = mean(TPM)) %>% 
+  ungroup() %>% 
+  spread(count_type, TPM)
 
+rs_exon_intron_comps <- list()
+rs_exon_intron_comps$exon <- rs_exon_intron_comp %>% 
+  select(-intron) %>% 
+  spread(developmental_stage, exon) %>% 
+  as.data.frame() %>% 
+  tibble::column_to_rownames("gene_name") %>% 
+  as.matrix()
+
+rs_exon_intron_comps$intron  <- rs_exon_intron_comp %>% 
+    select(-exon) %>% 
+  spread(developmental_stage, intron) %>% 
+  as.data.frame() %>% 
+  tibble::column_to_rownames("gene_name") %>% 
+  as.matrix()
+
+rs_exon_intron_comps_log <- map(rs_exon_intron_comps, 
+                            ~log1p(.x))
+
+rissland_mat_annot <- rissland_tpm_dat %>% 
+  ungroup() %>% 
+  select(gene_name, exon, intron, mzt_class, CLASS, new_class) %>% 
+  unique() %>% 
+  left_join(data_frame(gene_name = rownames(rs_exon_intron_comps_log$exon)), # reorder to match matrices above
+            ., by = "gene_name") %>% 
+  filter(!is.na(mzt_class))
+
+# only keep genes annotated by intron class
+rissland_mat_annot <- rissland_mat_annot %>% 
+  filter(!is.na(mzt_class))
+  
+rs_exon_intron_comps_log <- map(rs_exon_intron_comps_log, 
+                          ~.x[rownames(.x) %in% rissland_mat_annot$gene_name, ])
+
+
+## for monoexonic genes, set intron count to NA
+## plot heatmaps side by side
+## first all annotations (i.e. maternal, mat.zyg, zg)
+## then classify zyg into each timepoint and replot just zyg
+
+
+## All classes
+h1 <- Heatmap(rs_exon_intron_comps_log$exon, 
+                            na_col = "black",
+              name = "Exon Abundance",
+        show_row_dend = F, 
+        show_column_dend = F,
+        cluster_columns = FALSE,
+        show_row_names = FALSE,
+                column_title = "Exon Expression",
+        split = rissland_mat_annot$mzt_class)
+
+h2 <- Heatmap(rs_exon_intron_comps_log$intron, name = "Intron Abundance",
+              na_col = "black",
+        show_row_dend = F, 
+        show_column_dend = F,
+        cluster_columns = FALSE,
+        show_row_names = FALSE,
+        column_title = "Intron Expression",
+        split = rissland_mat_annot$mzt_class)
+
+outdir <- "exon_intron_heatmaps"
+dir.create(outdir)
+pdf(file.path(outdir, "all_classes.pdf"))
+draw(h1 + h2)
+dev.off()
+
+## mat-zyg
+
+mz_genes <- rissland_mat_annot %>% 
+  filter(mzt_class == "matzyg") %>% 
+  pull(gene_name)
+
+rs_exon_intron_comps_matzyg <- map(rs_exon_intron_comps, 
+                                ~.x[mz_genes, ])
+
+### make new classifcation based on first intronic apperance
+
+intron_apperance <- rs_exon_intron_comps_matzyg$intron > 0.1 
+intron_apperance <- as.data.frame(intron_apperance) %>% 
+  tibble::rownames_to_column("gene_name") %>% 
+  tbl_df() %>% 
+  gather(dev_stage, intron_expr, -gene_name)
+
+matzyg_intron_class <- intron_apperance %>% 
+  filter(intron_expr) %>% 
+  group_by(gene_name) %>% 
+  arrange(dev_stage, .by_group = T) %>% 
+  summarize(first_expr = dplyr::first(dev_stage)) %>% 
+  mutate(first_expr = str_replace(first_expr, " hr embryo", ""))
+
+#drop mRNAs without introns 
+rs_exon_intron_comps_matzyg <- map(rs_exon_intron_comps_matzyg, 
+                                   function(x){
+                                     log1p(x[matzyg_intron_class$gene_name, ])})
+
+h2 <- Heatmap(rs_exon_intron_comps_matzyg$intron, name = "Intron Abundance",
+              na_col = "black",
+        show_row_dend = F, 
+        show_column_dend = F,
+        cluster_columns = FALSE,
+        show_row_names = FALSE,
+        split = matzyg_intron_class$first_expr,
+        column_title = "Intron Expression")
+
+h1 <- Heatmap(rs_exon_intron_comps_matzyg$exon, 
+                            na_col = "black",
+              name = "Exon Abundance",
+        show_row_dend = F, 
+        show_column_dend = F,
+        cluster_columns = FALSE,
+        cluster_rows = FALSE,
+        show_row_names = FALSE,
+        split = matzyg_intron_class$first_expr, 
+        column_title = "Exon Expression")
+
+ h2 + h1
+pdf(file.path(outdir, "matzyg_classes.pdf"))
+draw(h2 + h1)
+dev.off()
+ 
+ ## zyg only
+z_genes <- rissland_mat_annot %>% 
+  filter(mzt_class == "zyg") %>% 
+  pull(gene_name)
+
+rs_exon_intron_comps_zyg <- map(rs_exon_intron_comps, 
+                                ~.x[z_genes, ])
+
+### make new classifcation based on first intronic apperance
+intron_apperance <- rs_exon_intron_comps_zyg$intron > 0.1 
+intron_apperance <- as.data.frame(intron_apperance) %>% 
+  tibble::rownames_to_column("gene_name") %>% 
+  tbl_df() %>% 
+  gather(dev_stage, intron_expr, -gene_name)
+
+zyg_intron_class <- intron_apperance %>% 
+  filter(intron_expr) %>% 
+  group_by(gene_name) %>% 
+  arrange(dev_stage, .by_group = T) %>% 
+  summarize(first_expr = dplyr::first(dev_stage)) %>% 
+  mutate(first_expr = str_replace(first_expr, " hr embryo", ""))
+
+#drop mRNAs without introns 
+rs_exon_intron_comps_zyg <- map(rs_exon_intron_comps_zyg, 
+                                   function(x){
+                                     log1p(x[zyg_intron_class$gene_name, ])})
+
+h2 <- Heatmap(rs_exon_intron_comps_zyg$intron, name = "Intron Abundance",
+              na_col = "black",
+        show_row_dend = F, 
+        show_column_dend = F,
+        cluster_columns = FALSE,
+        show_row_names = FALSE,
+        split = zyg_intron_class$first_expr,
+        column_title = "Intron Expression")
+
+h1 <- Heatmap(rs_exon_intron_comps_zyg$exon, 
+                            na_col = "black",
+              name = "Exon Abundance",
+        show_row_dend = F, 
+        show_column_dend = F,
+        cluster_columns = FALSE,
+        cluster_rows = FALSE,
+        show_row_names = FALSE,
+        split = zyg_intron_class$first_expr, 
+        column_title = "Exon Expression")
+
+ h2 + h1
+ 
+ pdf(file.path(outdir, "zyg_classes.pdf"))
+draw(h2 + h1)
+dev.off()
+```
+
+### compare classes
+
+```{r}
+mzt_classes <- rissland_mat_annot %>% 
+  filter(!is.na(CLASS)) %>% 
+  dplyr::select(gene_name, 
+                intron_classification = mzt_class, 
+                eisen_classification = CLASS,
+                eisen_with_pol2 = new_class) %>% 
+  gather(classification_method, classification, -gene_name, -intron_classification)
+
+plt <- ggplot(mzt_classes, aes(intron_classification)) +
+  geom_bar(aes(fill = classification)) +
+  facet_wrap(~classification_method) +
+  labs(y = "# of genes", 
+       x = "intron based classification") +
+  scale_fill_brewer(palette = "Set1", 
+                    name = "") +
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 1, 
+                                   vjust = 0.5))
+
+save_plot("compare_eisen_classes_w_wo_pol2.pdf", plt, base_aspect_ratio = 2)
+```
+
+Check out early group of zyg genes
+```{r}
+prembt <- filter(pol2chip_dat, !is.na(preMBT_group)) %>% 
+  pull(fb_symbol)
+zyg_intron_class <- zyg_intron_class %>% 
+  mutate(pol2 = ifelse(gene_name %in% prembt,
+                       "early_zyg",
+                       "not_early_zyg"))
+
+ggplot(zyg_intron_class, aes(first_expr)) +
+  geom_bar(aes(fill = pol2))
+```
+
+```{r}
+early_zyg <- read_delim("derenzis_sup_tbl_8.txt", col_names = F, skip = 1, delim = " ")
+early_zyg <- dplyr::select(early_zyg, gene_id = X2)
+early_zyg <- left_join(early_zyg, gtf) %>% 
+  select(gene_id, gene_name) %>% 
+  unique() %>% 
+  mutate(microarray = "early_zyg")
+
+zyg_intron_class <- zyg_intron_class %>% 
+  mutate(microarray = ifelse(gene_name %in% early_zyg$gene_name,
+                       "early_zyg",
+                       "not_early_zyg"))
+
+ggplot(zyg_intron_class, aes(first_expr)) +
+  geom_bar(aes(fill = microarray))
+
+
+left_join(rissland_mat_annot, 
+          early_zyg) %>% 
+  filter(!is.na(microarray)) %>%
+  group_by(mzt_class) %>% 
+  summarize(n = n())
+
+
+filter(rissland_mat_annot, 
+          gene_name %in% prembt) %>% 
+  group_by(mzt_class) %>% 
+  summarize(n = n())
+```

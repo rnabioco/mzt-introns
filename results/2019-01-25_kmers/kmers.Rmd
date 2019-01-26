@@ -1,0 +1,533 @@
+---
+title: "Kmers"
+author: "Kent Riemondy RBI"
+date: "1/25/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+```{r load_libs}
+source("../../R/globals.r")
+
+mdata <- read_tsv(file.path(project_dir, 
+                            "results", 
+                            "2018-12-16_drosophila_motifs",
+                            "processed_files", 
+                            "metadata.tsv"))
+
+gtffile <- "~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
+chromfile <- "~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
+genomefile <- "~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
+```
+
+## kmer enrichment 
+
+```{r}
+kmer_enrichment <- function(all_kmers, 
+                            group_1_genes,
+                            group_2_genes = NULL){
+  
+  bg_genes <- unique(all_kmers$gene_id)
+  test_genes <- intersect(group_1_genes, bg_genes)
+  
+  if(!is.null(group_2_genes)){
+    bg_genes <- intersect(group_2_genes, bg_genes)
+  } 
+
+  bg <- all_kmers %>% 
+      filter(gene_id %in% bg_genes) %>% 
+      mutate(success = ifelse(counts >= 1, 1L, 0L)) %>% 
+      group_by(kmer) %>% 
+      summarize(counts = sum(success))
+  
+  kmer_count <- all_kmers %>% 
+    filter(gene_id %in% group_1_genes) %>% 
+    mutate(success = ifelse(counts >= 1, 1L, 0L)) %>% 
+    group_by(kmer) %>% 
+    summarize(counts = sum(success))
+  
+  kmers_total <- left_join(kmer_count, 
+                           bg,
+                           by = "kmer",
+                           suffix = c("_test", "_bg"))
+  
+  kmers_total <- mutate(kmers_total, 
+                        n_seq_test = length(unique(test_genes)),
+                        n_seq_bg = length(unique(bg_genes))) %>% 
+    na.omit()
+  
+  out <- kmers_total %>% 
+    na.omit(.) %>%
+    rowwise() %>% 
+    do(broom::tidy(binom.test(.$counts_test, .$n_seq_test, 
+                       p = .$counts_bg / .$n_seq_bg,
+            alternative = "greater"))) 
+  
+  res <- bind_cols(kmers_total, out) %>% 
+    mutate(padj = p.adjust(p.value),
+           prop.test = counts_test / n_seq_test,
+           prop.bg = counts_bg / n_seq_bg,
+           enrichment = log2(prop.test / prop.bg),
+           log10pval = -log10(padj)) %>% 
+    arrange(padj) %>% 
+    mutate(rank = row_number(),
+           enriched = ifelse(rank <= 10, T, F)) %>% 
+    arrange(padj)
+  
+  res
+  
+}
+      
+
+
+plot_kmers <- function(kmer_summary, 
+                       plot_title = "Kmers enriched in promoters",
+                       n = ""){
+  
+  labeled_kmers <- filter(kmer_summary, enriched)
+  
+  plt <- ggplot(kmer_summary,
+                     aes(enrichment, log10pval)) +
+  geom_point() +
+  geom_text_repel(data = labeled_kmers, 
+                  aes(label = kmer), color = "red", 
+                  force = 10) +
+  labs(title = plot_title, 
+       subtitle = paste0(n, " genes"),
+       x = "Kmer Enrichment (log2)")
+  plt
+}
+
+
+plot_counts <- function(tidy_mat, 
+                        genes = c("FBgn0000008",
+                                  "FBgn0000015"), 
+                        group = "strain") {
+  res <- tidy_mat %>% 
+    gather(sample, tpm, -gene_id) %>% 
+    separate(sample, c("stage", "strain"), sep = "_")
+  
+  res <- mutate(res, 
+                count_type = ifelse(str_detect(gene_id, "^pre"),
+                                    "intron",
+                                    "exon"),
+                gene_name_to_plot = str_remove(gene_id, "^pre_"))
+  
+  res <- filter(res, 
+                gene_name_to_plot %in% c(genes, str_remove(genes, "^pre_")))
+  
+  plts <- map(genes, 
+      function(gene) {
+        filter(res, gene_name_to_plot == str_remove(gene, "^pre_")) %>% 
+          ggplot(., aes(stage, tpm)) +
+            geom_point(aes_string(color = group)) +
+            facet_wrap(~ count_type, scales = "free_y") +
+           labs(title = gene) + 
+           theme(axis.text.x = element_text(angle = 90, size = 2))
+      })
+  
+  plts
+}
+```
+
+Get promoter sequences for all genes (-2kbp to +500bp)
+
+```{r}
+
+tss <- get_tss(gtffile)
+gnome <- read_tsv(chromfile, 
+                  col_types = "ci---", 
+                  col_names = c("chrom", "size"))
+
+tss_slop <- bed_slop(tss, 
+                     genome = gnome, 
+                     left = 2000, right = 500, 
+                     strand = TRUE, 
+                     trim = TRUE) %>% 
+  unique() %>% 
+  bed_sort()
+      
+all_tss_seqs <- get_sequences(tss_slop, 
+                              genomefile)
+```
+
+```{r}
+kmers_all_promoters <- mutate(all_tss_seqs, 
+                          kmers = get_kmers(seq, n = 7, both_strands = TRUE)) %>% 
+                select(gene_id, start, end, kmers) %>% 
+  unnest() %>% 
+  group_by(gene_id, kmer) %>% 
+  summarize(counts = sum(counts)) %>% 
+  ungroup()
+
+```
+
+Get public gene sets 
+
+
+```{r}
+# derenzis genes
+renzis_zyg_genes <- read_delim(file.path(project_dir, "docs",
+                                   "renzis_all_zygotic.txt"),
+                           delim = " ", 
+                           col_names = FALSE)
+
+renzis_early_genes <- read_delim(file.path(project_dir, "docs",
+                                   "renzis_early_zygotic.txt"),
+                           delim = " ", col_names = FALSE, skip = 1)
+
+renzis_mzt_genes <- read_delim(file.path(project_dir, "docs",
+                                   "renzis_mzt.txt"),
+                           delim = " ", col_names = FALSE, skip = 1)
+
+
+# eisen genes
+
+if(!file.exists(file.path(project_dir, 
+                        "docs", 
+                        "eisen_data.tsv"))) {
+  download.file("https://ndownloader.figshare.com/files/400050",
+                file.path(project_dir, 
+                          "docs", 
+                          "eisen_data.tsv"))
+}
+
+edata <- read_tsv(file.path(project_dir, 
+                        "docs", 
+                        "eisen_data.tsv"))
+
+genename2id <- tidy_gtf(gtffile, zero_based_coords = TRUE) %>% 
+  filter(type == "gene") %>% 
+  dplyr::select(gene_name, gene_id) %>% 
+  unique()
+
+edata_genes <- dplyr::select(edata, NAME, CLASS) %>% 
+  left_join(genename2id, by = c("NAME" = "gene_name")) %>% 
+  na.omit() %>% 
+  split(., .$CLASS)
+
+
+# pol2 data
+url_name <- "https://datadryad.org/bitstream/handle/10255/dryad.52325/supplemental_file_1.xlsx?sequence=1"
+
+fn_name <- file.path(project_dir, 
+                        "docs", 
+                        "supplemental_file_1_polII_chip.xlsx")
+
+if(!file.exists(fn_name)) {
+  download.file(url_name, fn_name)
+}
+
+pol2chip_dat <- readxl::read_excel(fn_name, sheet = 2)
+
+matzyg_classification <- mutate(pol2chip_dat, 
+                                MBT_group = ifelse(!is.na(preMBT_group),
+                                                   "pre-MBT",
+                                                   MBT_group)) %>% 
+  filter(!is.na(MBT_group)) %>% 
+  dplyr::select(gene_id = fb_gene_id, 
+                gene_name = fb_symbol, 
+                MBT_group)
+
+pol2_groups <- split(matzyg_classification, matzyg_classification$MBT_group) %>% 
+  map(~.x$gene_id)
+
+public_gene_sets <- list(
+  derenzis_early_zygotic = renzis_early_genes$X2,
+  derenzis_pure_zygotic = renzis_zyg_genes$X2,
+  derenzis_mat_zygotic = renzis_mzt_genes$X2,
+  eisen_pure_zygotic = edata_genes$zyg$gene_id,
+  eisen_mat_zygotic = edata_genes$matzyg$gene_id,
+  eisen_pure_mat = edata_genes$mat$gene_id
+)
+
+public_gene_sets <-c(public_gene_sets, pol2_groups)
+
+kmer_results <- map(public_gene_sets, 
+     ~kmer_enrichment(kmers_all_promoters, 
+                      group_1_genes = .x))
+
+plts <- pmap(list(kmer_results, 
+                  names(kmer_results),
+                  public_gene_sets),
+            function(data, id, genes) {
+              ngenes <- length(unique(genes))
+              p <- plot_kmers(data, id, ngenes)
+              p})
+
+plt <- plot_grid(plotlist = plts, 
+          ncol = 3,
+          nrow = ceiling(length(plts) / 2))
+plt
+
+save_plot("promoter_kmer_enrichment_public_data.pdf",
+          plt,
+          ncol = 3, 
+          nrow = ceiling(length(plts) / 2), 
+          base_aspect_ratio = 1.2)
+```
+
+Get gene sets from our intron analysis:
+
+
+```{r}
+# get all tpms in matrix
+tpms <- read_tsv(file.path(results_dir, 
+                   "2018-12-16_drosophila_motifs", 
+                   "processed_files", "rissland_tpm_matrix.tsv.gz"))
+
+# get mean tpms per stage
+mean_tpms <- read_tsv(file.path(results_dir, 
+                   "2018-12-16_drosophila_motifs", 
+                   "processed_files", "rissland_tpm_means.tsv.gz"))
+
+de_res <- read_tsv(file.path(results_dir, 
+                   "2018-12-16_drosophila_motifs", 
+                   "processed_files", "rissland_deseq_results.tsv.gz"))
+# merge in DE info
+
+mean_intronic_tpms <- mean_tpms %>% 
+  filter(str_detect(gene_id, "^pre_")) %>% 
+  left_join(de_res, by = c("gene_id" = "row"))
+
+mean_exonic_tpms <- mean_tpms %>% 
+  filter(!str_detect(gene_id, "^pre_")) %>% 
+  left_join(de_res, by = c("gene_id" = "row"))
+
+#Calculate time to expression
+tpm_cut_off <- 0.25
+mean_exonic_tpms <- mean_exonic_tpms %>% 
+  select(gene_id:fasta_type, -fasta_type) %>% 
+  gather(stage, tpm, -gene_id) %>% 
+  mutate(expressed = tpm > tpm_cut_off) %>% 
+  group_by(gene_id) %>% 
+  arrange(stage, .by_group = TRUE) %>% 
+  summarize(expr_tpt = stage[expressed][1],# get first tpt above tpm threshold
+            max_tpm  = max(tpm, na.rm = TRUE),
+            mean_tpm = mean(tpm, na.rm = TRUE)) %>% 
+  left_join(mean_exonic_tpms, ., by = "gene_id")
+
+mean_intronic_tpms <- mean_intronic_tpms %>% 
+  select(gene_id:fasta_type, -fasta_type) %>% 
+  gather(stage, tpm, -gene_id) %>% 
+  mutate(expressed = tpm > tpm_cut_off) %>% 
+  group_by(gene_id) %>% 
+  arrange(stage, .by_group = TRUE) %>% 
+  summarize(expr_tpt = stage[expressed][1], # get first tpt above tpm threshold
+            max_tpm  = max(tpm, na.rm = TRUE),
+            mean_tpm = mean(tpm, na.rm = TRUE)) %>% 
+  left_join(mean_intronic_tpms, ., by = "gene_id")
+
+```
+
+Select catagories
+
+```{r}
+
+
+fold_change_cutoff <- 1
+padj_cutoff <- 0.05
+
+maternal_genes <- mean_exonic_tpms %>% 
+  filter(`0-1 hr embryo` >= tpm_cut_off) %>% 
+  pull(gene_id) %>% 
+  unique()
+
+maternal_genes <- mean_intronic_tpms %>% 
+  filter(`0-1 hr embryo` >= tpm_cut_off) %>% 
+  pull(gene_id) %>% 
+  no_pre() %>% 
+  unique() %>% 
+  c(., maternal_genes) %>% 
+  unique()
+
+zygotic_genes_exon <- mean_exonic_tpms %>% 
+     filter(padj < padj_cutoff, 
+            log2FoldChange > fold_change_cutoff,
+            max_tpm > tpm_cut_off) %>% 
+  arrange(padj) %>% 
+  pull(gene_id) %>% 
+  unique()
+
+zygotic_genes_intron <- mean_intronic_tpms %>% 
+     filter(padj < padj_cutoff, 
+            log2FoldChange > fold_change_cutoff,
+            max_tpm > tpm_cut_off) %>% 
+    arrange(padj) %>%
+  pull(gene_id) %>% 
+  unique()
+
+all_zygotic_combined <- unique(union(zygotic_genes_exon,
+                                        no_pre(zygotic_genes_intron)))
+                              
+pure_zygotic_combined <- setdiff(all_zygotic_combined, maternal_genes)
+
+mat_zyg_combined<- intersect(all_zygotic_combined, maternal_genes)
+
+pure_maternal <- setdiff(setdiff(maternal_genes, 
+                                 mat_zyg_combined),
+                         all_zygotic_combined)
+
+our_gene_lists <- lst(
+  all_zygotic_combined,
+  pure_zygotic_combined,
+  mat_zyg_combined,
+  pure_maternal
+)
+
+any(map_lgl(our_gene_lists, ~any(str_detect(., "^pre"))))
+
+kmer_results <- map(our_gene_lists, 
+     ~kmer_enrichment(kmers_all_promoters, 
+                      .x))
+
+plts <- pmap(list(kmer_results, 
+                  names(kmer_results),
+                  our_gene_lists),
+            function(data, id, genes) {
+              ngenes <- length(unique(genes))
+              p <- plot_kmers(data, id, ngenes)
+              p})
+
+
+plt <- plot_grid(plotlist = plts, 
+          ncol = 3)
+plt
+
+save_plot("promoter_kmer_enrichment_our_data.pdf",
+          plt,
+          ncol = 3, nrow = ceiling(length(plts) / 3), 
+          base_aspect_ratio = 1.2)
+```
+
+plot kmers by time to expression.
+
+maternal only -> early zyg -> late zyg
+
+```{r}
+time_to_expr <- mean_exonic_tpms %>% 
+  filter(!is.na(expr_tpt)) %>% 
+  select(gene_id, expr_tpt)
+  
+time_to_expr <- mean_intronic_tpms %>% 
+  filter(!is.na(expr_tpt)) %>% 
+  select(gene_id, expr_tpt) %>% 
+  mutate(gene_id = no_pre(gene_id)) %>% 
+  bind_rows(., time_to_expr) %>%  # keep earliest called timepoint
+  group_by(gene_id) %>% 
+  arrange(expr_tpt, .by_group = T) %>% 
+  dplyr::slice(1) %>% 
+  ungroup()
+
+# time_to_expr <- mutate(time_to_expr, 
+#                        expr_tpt = ifelse(expr_tpt %in% c("0-1 hr embryo",
+#                                                          "1-2 hr embryo"),
+#                                          "early zygotic",
+#                                          "late zygotic"))
+  
+zyg_time_to_expr <- filter(time_to_expr, 
+                           gene_id %in% our_gene_lists$pure_zygotic_combined) %>% 
+  split(., .$expr_tpt) %>% 
+  map(., ~.x$gene_id) 
+
+zyg_time_to_expr <- zyg_time_to_expr[map_int(zyg_time_to_expr, length) > 3]
+
+kmer_results <- map(zyg_time_to_expr, 
+     ~kmer_enrichment(kmers_all_promoters, 
+                      group_1_genes = .x))
+
+plts <- pmap(list(kmer_results, 
+                  names(kmer_results),
+                  zyg_time_to_expr),
+            function(data, id, genes) {
+              ngenes <- length(unique(genes))
+              p <- plot_kmers(data, id, ngenes)
+              p})
+
+plt <- plot_grid(plotlist = plts, 
+          nrow = 2,
+          ncol = 2)
+plt
+
+save_plot("promoter_kmer_enrichment_our_data_stages.pdf",
+          plt,
+          ncol = 2, nrow = 2, 
+          base_aspect_ratio = 1.2)
+```
+
+
+```{r}
+
+plts <- plot_counts(tpms, no_pre(zygotic_genes_intron[1:10]))
+
+plt <- plot_grid(plotlist = plts, 
+          ncol = 1)
+
+save_plot("zyg_counts.pdf", plt, ncol = 1, nrow = length(plts))
+```
+
+
+## plot ma
+
+
+```{r}
+
+tmp_plt_dat <- bind_rows(mean_exonic_tpms, mean_intronic_tpms) %>% na.omit()
+
+
+ma_plot <- ggplot(tmp_plt_dat,
+                    aes(mean_tpm,
+                         log2FoldChange)) +
+    geom_point(aes(colour = sig), size = 0.1) +
+    scale_colour_viridis(
+      discrete = TRUE,
+      name = "",
+      drop = FALSE,
+    ) +
+    facet_grid(count_type ~ .) +
+    scale_x_log10() +
+    labs(x = " Mean TPM",
+         y = expression(paste("log"[2], " ", frac(
+           "Zygotic", "Maternal"
+         )))) +
+    guides(colour = guide_legend(nrow = 1,
+                                 override.aes = list(size = 3))) +
+    theme(legend.position = "top")
+
+ma_plot
+
+save_plot("ma_plot_sig.pdf", ma_plot, nrow = 2)
+
+
+ma_plot <- ggplot(tmp_plt_dat %>% filter(padj < 0.05),
+                    aes(mean_tpm,
+                         log2FoldChange)) +
+    geom_point(aes(colour = count_type), size = 0.1) +
+    scale_colour_viridis(
+      discrete = TRUE,
+      name = "",
+      drop = FALSE,
+    ) +
+    scale_x_log10() +
+    labs(x = " Mean TPM",
+         y = expression(paste("log"[2], " ", frac(
+           "Zygotic", "Maternal"
+         )))) +
+    guides(colour = guide_legend(nrow = 1,
+                                 override.aes = list(size = 3))) +
+    theme(legend.position = "top")
+
+ma_plot
+
+save_plot("ma_plot_count_type.pdf", ma_plot, base_aspect_ratio = 1)
+```
+
+
+Take public gene set, and plot out expression with our data, and similarly kmers for expression time points. 
+

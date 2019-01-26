@@ -15,7 +15,8 @@ library(valr)
 library(tidyverse)
 library(rtracklayer)
 library(doParallel)
-source("../../R/globals.r")
+source("../../../R/globals.r")
+results_dir <- file.path(results_dir, "old_analyses")
 ```
 
 ## Examine miR-430 seed matches in Zebrafish data
@@ -121,8 +122,8 @@ utr_summary <- group_by(utr_seqs, gene_id) %>%
 
 seed_matches <- ggplot(utr_summary, 
        aes(cluster, mer6_counts)) +
+    geom_jitter() +
   geom_boxplot(aes(fill = cluster)) +
-  geom_jitter() +
   theme(legend.position = "none")
 
 save_plot("zelda_boxplots.pdf", plt, nrow = 1, ncol = 2)
@@ -161,7 +162,7 @@ ha <- HeatmapAnnotation(annotation_data[, c("mer8_counts", "mer6_counts")],
                                                        mer6_counts = list(title = "miR-430 6mer")))
 ht + ha
 
-pdf("zelda_binding_premRNA_clusters.pdf")
+pdf("mir430_binding_premRNA_clusters.pdf")
 print(ht + ha)
 dev.off()
 ```

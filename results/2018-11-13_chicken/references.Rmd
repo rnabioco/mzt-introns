@@ -1,0 +1,410 @@
+---
+title: "Make Chicken references"
+author: "Kent Riemondy RBI"
+date: "11/13/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_libs}
+source('../../R/globals.r')
+library(valr)
+library(tidyverse)
+library(rtracklayer)
+library(doParallel)
+```
+
+# Introduction and Goals
+Goal is to compare different methods for quantifing intronic abundance. This R markdown will generate the reference files used for quantification methods.
+
+# Methods to try for quantifying pre-mRNA/Intronic coverage
+
+1) Naive unique mapping reads in intronic regions versus exons.  
+
+2) Salmon spiked in with pre-mRNA annotations that span the geneic boundaries.  
+
+3) Salmon spiked in with pre-mRNA annotations, with regions with coverage in the t = 0 
+stages masked in the pre-mRNA annotations. Masking converts all sequences to Ns.  
+
+4) Salmon spiked in with pre-mRNA annotations, with regions with coverage in the t = 0 
+stages masked in the pre-mRNA annotations. Additionally mask internal exonic sequences to avoid extensive sequence overlap with the spliced mRNA transcript. Masking converts all sequences to Ns.  
+
+5) Use bowtie2 for alignment then quantify with salmon, using the annotations from 3.  
+
+6) Use bowtie2 for alignment then quantify with salmon, using the annotations from 4.  
+
+The masking process converts many nucleotides to N which could be problematic for salmon. When building the transcript index, `salmon` will by default insert pseudorandom nucleotides for the N's. The impact of this is unknown and could be problematic. 
+
+To potentially mitigate mismapping artifacts, bowtie2 will be used to map the transcriptome. It will not replace the N's. Salmon can then be run on the alignments to perform quantification.
+
+
+# Build References
+
+```{r annot}
+gtf <- '~/Projects/shared_dbases/annotation/chicken/gallus_gallus_5/Gallus_gallus.Gallus_gallus-5.0.94.gtf'
+gtf <- import(gtf)
+gtf <- as.data.frame(gtf) %>% 
+  tbl_df()
+
+fasta_fn <- '~/Projects/shared_dbases/genomes/chicken/gallus_gallus_5/Gallus_gallus.Gallus_gallus-5.0.dna.toplevel.fa'
+
+chrom_sizes <- read_tsv(str_c(fasta_fn, 
+                              '.fai'), 
+                        col_types = 'ci---', 
+                        col_names = c('chrom', 'size'))
+
+```
+
+## Method 1: Build intron and exon database for featureCounts
+
+This method is analgous to the method used by the Miller et al 2013. Essentially uniquely aligned reads are counted in either exonic regions or intronic regions. Intronic regions thate have read coverage in pre-MZT stages are masked and exclude from intronic quantification to avoid misannotation from obscuring transcriptional responses. 
+
+```{r get_coverage}
+mdata <- read_tsv(
+  file.path(
+    data_dir,
+    "raw_data",
+    "chicken",
+    "HWANG",
+    "PRJNA342320_download_log.txt"
+  )
+)
+
+mdata <- dplyr::select(mdata,
+                       run_accession,
+                       sample_title)
+
+# select relevant libs
+mdata <- dplyr::filter(mdata,
+                     str_detect(sample_title, "^Oocyte"))
+
+bws <- dir(
+  file.path(data_dir, "bigwigs", "chicken", "HWANG"),
+  full.names = TRUE,
+  pattern = ".bw"
+)
+
+bws <- str_subset(bws, str_c(mdata$run_accession,
+                             collapse = "|"))
+
+fwd_bws <- str_subset(bws, "fwd.bw")
+rev_bws <- str_subset(bws, "rev.bw")
+
+fwd_df <- map_dfr(fwd_bws,
+                  ~read_bigwig(.x, set_strand = "+"))
+
+rev_df <- map_dfr(rev_bws,
+                  ~read_bigwig(.x, set_strand = "-"))
+
+fwd_df <- bed_merge(fwd_df)
+rev_df <- bed_merge(rev_df)
+
+ivl_df <- bind_rows(list(
+  "+" = fwd_df,
+  "-" = rev_df), .id = "strand")
+
+ivl_df <- dplyr::select(ivl_df, 
+                        chrom:end,
+                        strand)
+
+gtf_df <- mutate(gtf,
+                 start = start - 1L,
+                 chrom = as.character(seqnames),
+                 strand = as.character(strand)) %>% 
+  bed_sort()
+
+exons <- filter(gtf_df, type == "exon") %>%  
+  dplyr::select(chrom,
+                start, 
+                end, 
+                transcript_id,
+                exon_number,
+                strand) %>% 
+  bed_sort() %>% 
+  group_by(strand)
+```
+
+```{r}
+ivl_df <- group_by(ivl_df, strand)
+intron_coverage <- bed_subtract(ivl_df, exons)
+
+masked_ivls <- intron_coverage %>% 
+  group_by(strand) %>% 
+  bed_merge() %>% 
+  ungroup()
+
+# cant find a repeat region file for ensembl at this time...
+
+#rpts <- read_bed(file.path(db_dir, "drosophila", 
+#                           "drosophila_rmsk.bed.gz"), n_fields = 6)
+#
+#masked_ivls <- bind_rows(rpts, masked_ivls)
+#masked_ivls <- dplyr::select(masked_ivls,
+#                             chrom:end, strand) %>% 
+#  group_by(strand) %>% 
+#  bed_merge()
+
+masked_out <- mutate(masked_ivls,
+                     score = 0L,
+                     name = ".") %>% 
+  ungroup() %>% 
+  dplyr::select(chrom,
+                start, 
+                end, 
+                name,
+                score,
+                strand) %>% 
+  bed_sort() %>% 
+  mutate_if(is.numeric, format, scientific = F)  %>% 
+  mutate_all(str_trim)
+
+write_tsv(masked_out, "chicken_intron_mask.bed", col_names = F)
+
+```
+
+```{r}
+exons <- filter(gtf_df, type == "exon") %>%  
+  dplyr::select(chrom,
+                start, 
+                end, 
+                transcript_id,
+                exon_number,
+                strand) %>% 
+  mutate(exon_number = as.integer(exon_number)) %>% 
+  group_by(chrom, transcript_id, strand) %>% 
+  arrange(chrom, start, end, .by_group = T) %>% 
+  mutate(id = row_number(),
+         max_exon_count = max(exon_number)) %>% 
+  bed_sort() %>% 
+  ungroup()
+
+simple_exons <- dplyr::select(exons,
+                              chrom:end, strand) %>% 
+  unique() %>%
+  group_by(strand)
+
+intron_coverage <- bed_subtract(ivl_df, simple_exons) 
+
+mono_exon_mask <- exons %>% 
+  filter(end - start > 200,
+         max_exon_count == 1) %>% 
+  bed_slop(both = -75, genome = chrom_sizes) %>% 
+  dplyr::select(chrom:end, strand)
+
+multi_exon_mask <- exons %>%
+  filter(max_exon_count > 1, 
+         end - start > 200) %>% 
+  group_by(chrom, transcript_id, strand) %>% 
+  mutate(start = ifelse(id == 1, # first exon, don't trim start
+                            start,
+                            start + 75L),
+         end = ifelse(id == max_exon_count, # last exon don't trim end
+                          end,
+                          end - 75L)) %>% 
+  ungroup() %>% 
+  filter(start < end) %>% # remove exons that are fully masked
+  dplyr::select(chrom, 
+                start,
+                end,
+                strand)
+  
+not_modified_exons <- exons %>% 
+  filter(end - start <= 200) %>% 
+  dplyr::select(chrom, 
+                start,
+                end,
+                strand)
+
+exon_mask <- bind_rows(list(mono_exon_mask,
+                            multi_exon_mask,
+                            not_modified_exons)) %>% 
+  bed_sort() %>% 
+  unique()
+  
+intron_coverage <- bind_rows(intron_coverage, 
+                             exon_mask)
+
+masked_ivls <- group_by(intron_coverage, strand) %>% 
+  bed_merge() %>% 
+  ungroup()
+
+masked_out <- mutate(masked_ivls,
+                     score = 0L,
+                     name = ".") %>% 
+  ungroup() %>% 
+  dplyr::select(chrom,
+                start, 
+                end, 
+                name,
+                score,
+                strand) %>% 
+  bed_sort() %>% 
+  mutate_if(is.numeric, format, scientific = F)  %>% 
+  mutate_all(str_trim)
+
+write_tsv(masked_out, "chicken_exon_intron_plus_exons_juncts_mask.bed", col_names = F)
+```
+
+```{r}
+introns <- filter(gtf_df, type == "transcript") %>% 
+  dplyr::select(chrom, start, end, gene_id, strand) %>% 
+  unique() %>% 
+  group_by(strand) %>% 
+  bed_subtract(group_by(simple_exons, strand)) %>% 
+  group_by(strand) %>% 
+  bed_subtract(group_by(masked_ivls, strand)) %>% 
+  unique()
+
+introns_out <- introns %>% 
+  mutate(score = 0L) %>% 
+  dplyr::select(chrom, start, end, gene_id, score, strand) %>% 
+  mutate_if(is.numeric, format, scientific = F) %>% 
+  mutate_all(str_trim)
+
+write_tsv(introns_out, "chicken_introns.bed", col_names = F)
+introns_out %>% 
+  dplyr::select(GeneID = gene_id, Chr = chrom, Start = start, End = end, Strand = strand) %>% 
+  write_tsv(., "chicken_introns.saf")
+
+exons_out <- filter(gtf_df, type == "exon") %>%  
+  dplyr::select(chrom,
+                start, 
+                end, 
+                gene_id,
+                exon_number,
+                strand) %>% 
+  bed_sort() %>% 
+  mutate_if(is.numeric, format, scientific = F)  %>% 
+  mutate_all(str_trim)
+
+write_tsv(exons_out, "chicken_exons.bed", col_names = F)
+
+exons_out %>% 
+  dplyr::select(GeneID = gene_id, Chr = chrom, Start = start, End = end, Strand = strand) %>% 
+  write_tsv(., "chicken_exons.saf")
+
+```
+
+## Method 3->6
+
+Bed intervals generated above will be converted to transcript coordinates (from genomic) and using to mask DNA sequence to N's using `bedtools maskfasta`.
+
+```{r, warning=FALSE, message=FALSE, eval = F}
+library(GenomicFeatures)
+```
+
+
+```{r read_bed, eval = F}
+gtf_to_bed <- function(gtf){
+  gtf_df <- dplyr::rename(gtf,
+                          chrom = seqnames) %>% 
+    mutate(start = start - 1)
+  gtf_df
+}
+  
+gtf_fn <- file.path(project_dir, "dbases", "chicken", "primary_transcripts.gtf")
+gtf <- import(gtf_fn)
+gtf <- as.data.frame(gtf) %>% tbl_df()
+
+gtf_df <- gtf_to_bed(gtf) %>% 
+  group_by(strand)
+
+bed_df <- read_bed("chicken_intron_mask.bed", n = 6)
+bed_df <- mutate(bed_df, start = start + 1)
+
+bed <- makeGRangesFromDataFrame(bed_df)
+gtf <- import(gtf_fn)
+ggtf <- makeTxDbFromGRanges(gtf)
+gtx <- exonsBy(ggtf, by = "tx", use.names = T)
+db_out <- GenomicFeatures::mapToTranscripts(x = bed, transcripts = gtx)
+db_out <- as_data_frame(db_out)
+
+db_out <- mutate(
+  db_out,
+  start = start - 1,
+  end = end,
+  score = 0,
+  name = "."
+) %>%
+  ungroup() %>%
+  dplyr::select(chrom = seqnames,
+                start,
+                end,
+                name,
+                score,
+                strand) %>%
+  bed_sort() %>%
+  mutate_if(is.numeric, format, scientific = F)  %>%
+  mutate_all(str_trim)
+
+write_tsv(db_out, "chicken_intron_mask_txcoords.bed", col_names = F)
+
+
+bed_df <- read_bed("chicken_exon_intron_plus_exons_juncts_mask.bed", n = 6)
+bed_df <- mutate(bed_df, start = start + 1)
+
+bed <- makeGRangesFromDataFrame(bed_df)
+gtf <- import(gtf_fn)
+ggtf <- makeTxDbFromGRanges(gtf)
+gtx <- exonsBy(ggtf, by = "tx", use.names = T)
+db_out <- GenomicFeatures::mapToTranscripts(x = bed, transcripts = gtx, intronJunctions = F)
+db_out <- as_data_frame(db_out)
+
+db_out <- mutate(db_out,
+                     start = start - 1,
+                     end = end,
+                     score = 0,
+                     name = ".") %>% 
+  ungroup() %>% 
+  dplyr::select(chrom = seqnames,
+                start, 
+                end, 
+                name,
+                score,
+                strand) %>% 
+  bed_sort() %>% 
+  mutate_if(is.numeric, format, scientific = F)  %>% 
+  mutate_all(str_trim)
+
+# only masked pre_mRNA annotations
+db_out <- filter(db_out, str_detect(chrom, "^pre_"))
+write_tsv(db_out, "chicken_intron_mask_plus_exon_txcoords.bed", col_names = F)
+```
+
+### Make masked fasta files
+
+```{r, eval = F}
+transcript_fa <- file.path(project_dir,
+                           "dbases",
+                           "chicken",
+                           "primary_transcripts.fa")
+
+covered_intron_mask_bed <- "chicken_intron_mask_txcoords.bed"
+covered_intron_exon_mask_bed <- "chicken_intron_mask_plus_exon_txcoords.bed"
+
+Sys.setenv(FA = transcript_fa)
+Sys.setenv(INTRON_BED = covered_intron_mask_bed)
+Sys.setenv(INTRON_EXON_BED = covered_intron_exon_mask_bed)
+
+Sys.setenv(INTRON_FA = file.path(project_dir, "dbases", "chicken", "primary_transcripts_masked.fa"))
+Sys.setenv(INTRON_EXON_FA = file.path(project_dir, "dbases", "chicken", "primary_transcripts_masked_exons.fa"))
+
+```
+
+```{bash primary_transcript_fa, eval = T}
+echo $FA
+head $INTRON_BED
+head $INTRON_EXON_BED
+bedtools maskfasta \
+  -fi $FA \
+  -bed $INTRON_BED \
+  -fo $INTRON_FA
+ 
+bedtools maskfasta \
+  -fi $FA \
+  -bed $INTRON_EXON_BED \
+  -fo $INTRON_EXON_FA 
+```
