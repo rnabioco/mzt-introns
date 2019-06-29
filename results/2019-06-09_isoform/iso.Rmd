@@ -575,6 +575,10 @@ pum_dat <- read_excel(pum_file, skip = 3)
 z <- zyg_tx[zyg_tx$gene_id %in% to_keep, ]$featureID
 m <- mat_tx[mat_tx$gene_id %in% to_keep, ]$featureID
 
+annots <- list(zygotic = z,
+               maternal = m)
+
+annots <- 
 map_dfr(annots, 
     ~tibble(transcript_id = .x, 
             pum = .x %in% pum_dat$`Updated FBgn ID (FlyBase release 5.56)`,
