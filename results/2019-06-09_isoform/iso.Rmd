@@ -1,0 +1,787 @@
+---
+title: "isoforms"
+author: "Kent Riemondy RBI"
+date: "6/20/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(DEXSeq)
+library(tidyverse)
+source("../../R/globals.r")
+
+mdata <- read_tsv(file.path(data_dir,
+                             "raw_data",
+                             "drosophila",
+                             "RISSLAND",
+                             "GSE98106_run_info_geo.txt"))
+
+#simplify mdata
+mdata <- dplyr::select(mdata,
+                        Run_s, 
+                        developmental_stage_s,
+                        rip_antibody_s,
+                        source_name_s,
+                        strain_s)
+
+# select relevant libs
+mdata <- dplyr::filter(mdata,
+                        source_name_s == "Embryo",
+                        strain_s %in% c("w1118", "eGFP-ME31B"),
+                        rip_antibody_s == "none") %>% 
+  dplyr::select(-rip_antibody_s)
+
+
+#cleanup names
+mdata <- mdata %>% 
+  mutate(source_name_s = ifelse(source_name_s == "embryos", 
+                                "Embryo",
+                                source_name_s),
+         developmental_stage_s = str_replace(developmental_stage_s,
+                                             " h ",
+                                             " hr "))
+
+# cleanup colnames
+colnames(mdata) <- str_replace(colnames(mdata),
+                               "_s$",
+                               "")
+
+fa_type <- c(
+  "primary_transcripts_masked"
+)
+
+pdata <- mutate(mdata, 
+                mzt = ifelse(str_detect(developmental_stage,
+                                        "^[2345]-[3456] hr embryo"),
+                             "zygotic",
+                             "maternal"),
+                strain_id = str_replace(strain, "-", "_"))
+
+
+rissland_files <- file.path(data_dir,
+                                 "salmon", 
+                                 "drosophila",
+                                 "RISSLAND",
+                                 fa_type,
+                                 pdata$Run,
+                                 "quant.sf")
+
+tids <- read_tsv(rissland_files[1]) %>% 
+  dplyr::select(Name)
+
+gtf <- "~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
+gtf <- import(gtf)
+gtf <- as.data.frame(gtf)
+
+tx2gene <- gtf %>% 
+  filter(type == "transcript") %>% 
+  dplyr::select(transcript_id, gene_id) %>% 
+  tbl_df() %>% 
+  unique()
+
+tx2gene_mapping <- full_join(tids, tx2gene,
+                             by = c("Name" = "transcript_id"))
+
+gene2symbol <- gtf %>% 
+  filter(type == "gene") %>% 
+  dplyr::select(gene_id, gene_name) %>% 
+  tbl_df() %>% 
+  unique()
+
+txi <- tximport(rissland_files,
+                type="salmon", 
+                txOut=TRUE,
+                countsFromAbundance="scaledTPM")
+
+cts <- txi$counts
+cts <- cts[!str_detect(rownames(cts), "^pre"), ]
+cts <- cts[rowSums(cts) > 0,]
+
+tx2gene_mapping <- left_join(tibble(Name = rownames(cts)),
+                             tx2gene_mapping,
+                             by = "Name")
+
+
+dxd <- DEXSeqDataSet(countData=round(cts),
+                     sampleData=as.data.frame(pdata),
+                     design=~sample + exon + mzt:exon,
+                     featureID=tx2gene_mapping$Name,
+                     groupID=tx2gene_mapping$gene_id)
+
+dxd <- estimateSizeFactors(dxd)
+dxd <- estimateDispersions(dxd, quiet=TRUE)
+dxd <- testForDEU(dxd, reducedModel=~sample + exon)
+
+dxd <- estimateExonFoldChanges( dxd, fitExpToVar="mzt")
+    
+dxr <- DEXSeqResults(dxd, independentFiltering=FALSE)
+
+qval <- perGeneQValue(dxr)
+dxr.g <- tibble(gene = names(qval),
+                qval) %>% 
+  arrange(qval)
+```
+
+
+
+```{r}
+# get all tpms in matrix
+tpms <- read_tsv(file.path(results_dir, 
+                   "2018-12-16_drosophila_motifs", 
+                   "processed_files", "rissland_tpm_matrix.tsv.gz"))
+
+# get mean tpms per stage
+mean_tpms <- read_tsv(file.path(results_dir, 
+                   "2018-12-16_drosophila_motifs", 
+                   "processed_files", "rissland_tpm_means.tsv.gz"))
+
+de_res <- read_tsv(file.path(results_dir, 
+                   "2018-12-16_drosophila_motifs", 
+                   "processed_files", "rissland_deseq_results.tsv.gz"))
+# merge in DE info
+
+mean_intronic_tpms <- mean_tpms %>% 
+  filter(str_detect(gene_id, "^pre_")) %>% 
+  left_join(de_res, by = c("gene_id" = "row"))
+
+mean_exonic_tpms <- mean_tpms %>% 
+  filter(!str_detect(gene_id, "^pre_")) %>% 
+  left_join(de_res, by = c("gene_id" = "row"))
+
+#Calculate time to expression
+tpm_cut_off <- 0.50
+intron_tpm_cut_off <- 0.10
+
+mean_exonic_tpms <- mean_exonic_tpms %>% 
+  select(gene_id:fasta_type, -fasta_type) %>% 
+  gather(stage, tpm, -gene_id) %>% 
+  mutate(expressed = tpm > tpm_cut_off) %>% 
+  group_by(gene_id) %>% 
+  arrange(stage, .by_group = TRUE) %>% 
+  summarize(expr_tpt = stage[expressed][1],# get first tpt above tpm threshold
+            max_tpm  = max(tpm, na.rm = TRUE),
+            mean_tpm = mean(tpm, na.rm = TRUE)) %>% 
+  left_join(mean_exonic_tpms, ., by = "gene_id")
+
+mean_intronic_tpms <- mean_intronic_tpms %>% 
+  select(gene_id:fasta_type, -fasta_type) %>% 
+  gather(stage, tpm, -gene_id) %>% 
+  mutate(expressed = tpm > intron_tpm_cut_off) %>% 
+  group_by(gene_id) %>% 
+  arrange(stage, .by_group = TRUE) %>% 
+  summarize(expr_tpt = stage[expressed][1], # get first tpt above tpm threshold
+            max_tpm  = max(tpm, na.rm = TRUE),
+            mean_tpm = mean(tpm, na.rm = TRUE)) %>% 
+  left_join(mean_intronic_tpms, ., by = "gene_id")
+
+```
+
+Select catagories
+
+```{r}
+
+fold_change_cutoff <- 1
+padj_cutoff <- 0.01
+
+maternal_genes <- mean_exonic_tpms %>% 
+  filter(`0-1 hr embryo` >= tpm_cut_off) %>% 
+  pull(gene_id) %>% 
+  unique()
+
+maternal_genes <- mean_intronic_tpms %>% 
+  filter(`0-1 hr embryo` >= intron_tpm_cut_off) %>% 
+  pull(gene_id) %>% 
+  no_pre() %>% 
+  unique() %>% 
+  c(., maternal_genes) %>% 
+  unique()
+
+zygotic_genes_exon <- mean_exonic_tpms %>% 
+     filter(padj < padj_cutoff, 
+            log2FoldChange > fold_change_cutoff,
+            max_tpm > tpm_cut_off) %>% 
+  arrange(padj) %>% 
+  pull(gene_id) %>% 
+  unique()
+
+zygotic_genes_intron <- mean_intronic_tpms %>% 
+     filter(padj < 0.05, 
+            log2FoldChange > 0,
+            max_tpm > intron_tpm_cut_off) %>% 
+    arrange(padj) %>%
+  pull(gene_id) %>% 
+  unique()
+
+all_zygotic_combined <- unique(union(zygotic_genes_exon,
+                                     no_pre(zygotic_genes_intron)))
+                              
+pure_zygotic_combined <- setdiff(all_zygotic_combined, maternal_genes)
+
+mat_zyg_combined<- intersect(all_zygotic_combined, maternal_genes)
+
+pure_maternal <- setdiff(setdiff(maternal_genes, 
+                                 mat_zyg_combined),
+                         all_zygotic_combined)
+
+our_gene_lists <- lst(
+  all_zygotic_combined,
+  pure_zygotic_combined,
+  zygotic_genes_intron = no_pre(zygotic_genes_intron),
+  zygotic_genes_exon,
+  mat_zyg_combined,
+  pure_maternal
+)
+
+```
+
+How many genes show isoform switching per class?
+
+
+```{r}
+cats <- list(zygotic = pure_zygotic_combined, 
+                  maternal_zygotic = mat_zyg_combined, 
+                  maternal = pure_maternal)
+gene_classes <- map_dfr(cats, ~tibble(gene_id = .x), .id = "class")
+
+gene_classes <- left_join(gene_classes, dxr.g, 
+                          by = c("gene_id" = "gene")) %>% 
+  left_join(gene2symbol, by = c("gene_id"))
+
+group_by(gene_classes, class) %>% 
+  mutate(n_genes = n()) %>% 
+  ungroup() %>% 
+  filter(qval < 0.05) %>% 
+  group_by(class) %>% 
+  summarize(`# of genes with switching isoforms` = n(), 
+            `Total # of genes` = unique(n_genes))
+```
+Need to check on the maternal transcripts that switch isoforms? COuld be interesting or an artifact. It looks like most of these have high pvals for intronic DE or have strange annotations (i.e. retained introns in transcripts) that preclude analysis by salmon via pri-mRNA.
+
+
+Next subset the m + z isofrom switching events and compare the most abundant maternal isoform to the isoform that becomes abundant. 
+
+Conclusions to show:
+  1) Most of the isoform switching is maternal -> down and zyg -> up
+  2) 
+
+```{r}
+mz_iso <- gene_classes %>% 
+  filter(class == "maternal_zygotic",
+         qval < 0.05) %>% 
+  arrange(qval)
+
+dxr_tidy <- as.data.frame(dxr) %>% 
+  dplyr::select(groupID:log2fold_zygotic_maternal) %>% 
+  as_tibble()
+
+
+# 1) is isoform up or down post MZT
+# 2) which iso is dominant maternal
+# 3) which iso is dominantly upregulated post MZT
+
+dxr_tidy <- left_join(mz_iso, 
+            dxr_tidy, 
+            by = c("gene_id" = "groupID")) %>% 
+  group_by(gene_id) %>% 
+  mutate(maternal_max = maternal == max(maternal),  
+         up = log2fold_zygotic_maternal > 0) 
+
+
+# find maximally upregulated transcript post-mzt
+
+max_zyg_tx <- filter(dxr_tidy,
+                       padj < 0.05,
+                       !maternal_max) %>% 
+  group_by(gene_id) %>% 
+  mutate(zygotic_max = zygotic == max(zygotic)) %>% 
+  filter(zygotic_max) %>% 
+  pull(featureID)
+
+dxr_tidy <- dxr_tidy %>% 
+  mutate(zygotic_max = featureID %in% max_zyg_tx) %>% 
+  ungroup()
+
+# pull out isoform switching txs mat->zyg
+# filter to only keep 1 maternal and 1 zygotic transcript
+switching_iso <- filter(dxr_tidy, 
+       maternal_max | (zygotic_max & up))
+
+zyg_tx <- filter(switching_iso, zygotic_max)
+mat_tx <- filter(switching_iso, maternal_max)
+
+# ... comp two classes
+
+plt_dat <- bind_rows(list("zygotic"  = zyg_tx,
+                          "maternal" = mat_tx), 
+                     .id = "tx_class")
+
+p <- ggplot(plt_dat, 
+       aes(tx_class, log2fold_zygotic_maternal)) +
+  geom_boxplot(aes(fill = tx_class)) +
+  scale_fill_brewer(name = "",
+                    palette = "Set1") +
+  labs(y = "Fold change (Zygotic / Maternal) log2") +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none")
+save_plot("tx_fold_changes.pdf", p, base_asp = 1.0)
+```
+
+
+Compare annotaion features between two classes
+
+```{r}
+library(txcompare)
+library(valr)
+gtf_fn <- "~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
+gtf <- txcompare::tidy_gtf(gtf_fn)
+
+
+# only keep genes with transcripts in both catagories
+to_keep <- intersect(zyg_tx$gene_id, mat_tx$gene_id)
+z <- zyg_tx[zyg_tx$gene_id %in% to_keep, ]$featureID
+m <- mat_tx[mat_tx$gene_id %in% to_keep, ]$featureID
+
+tx_feats <- map(list(zygotic = z,
+                     maternal = m),
+  ~calc_features(gtf, .x)) 
+
+plt_dat <- map_dfr(tx_feats,
+  ~unique(.x) %>% 
+  filter(type == "CDS") %>% 
+  mutate(flen = end - start) %>% 
+  group_by(transcript_id) %>% 
+  summarize(flen = sum(flen)) %>% 
+  arrange(desc(flen)),
+  .id = "tx_class")
+
+pcds <- ggplot(plt_dat, 
+       aes(tx_class, flen)) +
+  geom_violin(aes(fill = tx_class)) +
+  geom_boxplot(alpha = 0.5, width = 0.5) +
+  scale_fill_brewer(name = "",
+                    palette = "Set1") +
+  labs(y = "CDS length") +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none")
+
+
+plt_dat <- map_dfr(tx_feats,
+  ~unique(.x) %>% 
+  filter(type == "five_prime_utr") %>% 
+  mutate(flen = end - start) %>% 
+  group_by(transcript_id) %>% 
+  summarize(flen = sum(flen)) %>% 
+  arrange(desc(flen)),
+  .id = "tx_class")
+
+p5utr <- ggplot(plt_dat, 
+       aes(tx_class, flen)) +
+  geom_violin(aes(fill = tx_class)) +
+  geom_boxplot(alpha = 0.5, width = 0.5) +
+  scale_fill_brewer(name = "",
+                    palette = "Set1") +
+  labs(y = "5' UTR length") +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none")
+
+
+
+plt_dat <- map_dfr(tx_feats,
+  ~unique(.x) %>% 
+  filter(type == "three_prime_utr") %>% 
+  mutate(flen = end - start) %>% 
+  group_by(transcript_id) %>% 
+  summarize(flen = sum(flen)) %>% 
+  arrange(desc(flen)),
+  .id = "tx_class")
+
+p3utr <- ggplot(plt_dat, 
+       aes(tx_class, flen)) +
+  geom_violin(aes(fill = tx_class)) +
+  geom_boxplot(alpha = 0.5, width = 0.5) +
+  scale_fill_brewer(name = "",
+                    palette = "Set1") +
+  labs(y = "3' UTR length") +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none")
+
+###
+annots <- list(zygotic = z,
+                     maternal = m)
+tx_feats <- map(annots,
+  ~calc_other_features(gtf, .x)) 
+
+
+### length
+plt_dat <- bind_rows(tx_feats, .id = "tx_class")
+
+plen <- ggplot(plt_dat, 
+       aes(tx_class, flen)) +
+  geom_violin(aes(fill = tx_class)) +
+  geom_boxplot(alpha = 0.5, width = 0.5) +
+  scale_y_log10() +
+  scale_fill_brewer(name = "",
+                    palette = "Set1") +
+  labs(y = "Transcript Length") +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none")
+
+pnexons <- ggplot(plt_dat, 
+       aes(tx_class, n_exons)) +
+  geom_violin(aes(fill = tx_class)) +
+  geom_boxplot(alpha = 0.5, width = 0.5) +
+  scale_fill_brewer(name = "",
+                    palette = "Set1") +
+  labs(y = "# of exons") +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none")
+
+pnintrons <- ggplot(plt_dat, 
+       aes(tx_class, n_introns)) +
+  geom_violin(aes(fill = tx_class)) +
+  geom_boxplot(alpha = 0.5, width = 0.5) +
+  scale_fill_brewer(name = "",
+                    palette = "Set1") +
+  labs(y = "# of introns") +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none")
+
+plt <- plot_grid(p5utr, pcds, p3utr, 
+          plen, pnexons, pnintrons,
+          ncol = 3,
+          nrow = 2)
+plt
+save_plot("transcript_features.pdf", plt, nrow = 2, ncol = 3,
+          base_asp = 1)
+```
+
+
+# CDS analysis
+1) Rank genes by q-val
+2) have two rows per gene for maternal and zyg
+3) 
+```{r}
+z_g <- zyg_tx[zyg_tx$gene_id %in% to_keep, ]
+m_g <- mat_tx[mat_tx$gene_id %in% to_keep, ]
+annots <- bind_rows(list(zygotic = z_g, 
+               maternal = m_g),
+          .id = "tx_class")  %>% 
+  arrange(qval, gene_name)
+
+
+library(tidyverse)
+library(txcompare)
+library(kentr)
+
+gtf <- tidy_gtf("~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf")
+fa_fn <- "~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
+pep_fa <- "~/src/rnabioco/txcompare/inst/extdata/Drosophila_melanogaster.BDGP6.22.pep.all.fa"
+
+gtf <- filter(gtf, transcript_id %in% annots$featureID)
+
+cds <- txcompare::gtf_to_seq(gtf, fasta_path = fa_fn, type_field = "CDS")
+
+cds <- left_join(cds, 
+                 dplyr::select(gtf,
+                          transcript_id,
+                          protein_id) %>%
+              unique() %>%
+              na.omit()) %>% 
+  mutate(aa = getContig(protein_id, path.expand(pep_fa)))
+
+
+annots <- left_join(annots, cds,
+                    by = c("featureID" = "transcript_id"))
+
+#932.46
+
+tx_gtf <- filter(gtf, transcript_id %in% annots$featureID)
+         
+m <- annots %>% filter(tx_class == "maternal") %>% pull(featureID)    
+z <- annots %>% filter(tx_class == "zygotic") %>% pull(featureID)    
+
+
+annots <- comp_feature_seqs(z, m, gtf) %>% 
+  dplyr::select(-tx_type) %>% 
+  left_join(annots, ., by = c("featureID" = "transcript_id"))
+
+filter(annots, tx_class == "zygotic") %>% 
+  na.omit() %>% #ncRNAs don't have cds...
+  group_by(same_CDS, same_five_prime_utr, same_three_prime_utr) %>% 
+  summarize(n_per_class = n()) %>% 
+  ungroup() %>% 
+  mutate(percent =100 * n_per_class / sum(n_per_class))
+
+
+simple_annots <- select(annots, 
+                        gene_id, 
+                        gene_name,
+                        per_gene_qval = qval,
+                        transcript_id = featureID,
+                        transcript_type = tx_class,
+                        strand,
+                        per_tx_padj = padj,
+                        log2fold_zygotic_maternal,
+                        protein_id,
+                        protein_seq = aa,
+                        starts_with("same_"),
+                        ends_with("_length")
+                        )
+
+cds_changed_annots <- filter(simple_annots, 
+                             !same_CDS)
+```
+
+To do:
+Mark if 5'UTR is different in z versus m
+Mark if 3'UTR is different in z versus m
+Mark if CDS is different in z versus m
+
+
+
+
+
+
+
+```{r}
+smaug_file <- ("supplement_2_chen_gb_2014.xlsx")
+  
+  
+download.file("https://static-content.springer.com/esm/art%3A10.1186%2Fgb-2014-15-1-r4/MediaObjects/13059_2013_3195_MOESM2_ESM.xlsx", 
+              smaug_file)
+
+library(readxl)
+smaug_dat <- read_excel(smaug_file, skip = 1)
+
+ 
+brat_file <- "supplement_2_laver_gb_2015.xlsx"
+# brat pull down
+download.file("https://static-content.springer.com/esm/art%3A10.1186%2Fs13059-015-0659-4/MediaObjects/13059_2015_659_MOESM2_ESM.xlsx", brat_file)
+
+brat_dat <- read_excel(brat_file, skip = 3)
+
+pum_file <- "supplement_3_laver_gb_2015.xlsx"
+  
+# pumillio pull down
+download.file("https://static-content.springer.com/esm/art%3A10.1186%2Fs13059-015-0659-4/MediaObjects/13059_2015_659_MOESM3_ESM.xlsx", pum_file)
+
+pum_dat <- read_excel(pum_file, skip = 3)
+
+
+z <- zyg_tx[zyg_tx$gene_id %in% to_keep, ]$featureID
+m <- mat_tx[mat_tx$gene_id %in% to_keep, ]$featureID
+
+map_dfr(annots, 
+    ~tibble(transcript_id = .x, 
+            pum = .x %in% pum_dat$`Updated FBgn ID (FlyBase release 5.56)`,
+            brat = .x %in% brat_dat$`Updated FBgn ID (FlyBase release 5.56)`,
+            smaug = .x %in% smaug_dat$`Flybase number`),
+    .id = "tx_class") %>% 
+  group_by(tx_class) %>% 
+  summarize(
+    n_txs = n(),
+    prop_pum = sum(pum) / n_txs)
+  
+```
+
+
+
+
+```{r}
+# maternal degraded, no zyg tx
+m_deg <- mean_exonic_tpms %>% 
+  filter(gene_id %in% maternal_genes, !gene_id %in% all_zygotic_combined) %>% 
+  filter(log2FoldChange < -2, padj < 0.05) 
+
+
+
+# maternal stable (at least during expt) no zyg tx
+m_stb <- mean_exonic_tpms %>% 
+  filter(gene_id %in% maternal_genes, !gene_id %in% all_zygotic_combined) %>% 
+  filter(abs(log2FoldChange) < 1,
+         padj > 0.50) 
+```
+
+1) how many genes change (M and Z) isoforms?
+2) What annotation features are altered?
+  - annotate each exon from gtf as cds, 5'utr, 3'utr
+  - also calc length 
+  - 
+3) What kmers are introduced or lost?
+4) Smaug binding site enrichment/depletion
+
+
+
+```{r, eval = F}
+library(kentr)
+gtffile <- "~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
+chromfile <- "~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
+genomefile <- "~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
+
+gnome <- read_tsv(chromfile, col_types = "ci---", 
+                  col_names= c("chrom", "size"))
+
+gtf <- import(gtffile)
+gtf <- as.data.frame(gtf)
+
+all_genes <- unique(gtf$gene_id)
+all_utrs <- get_3utrs(gtffile, all_genes)
+
+
+all_utrs <- group_by(all_utrs, gene_id) %>% 
+  mutate(n = row_number(),
+         id = str_c(gene_id, "_", n)) %>% 
+  select(chrom, start, end, id, gene_id, strand) %>% 
+  ungroup() 
+
+all_utrs_seqs <- get_sequences(all_utrs, genomefile)
+
+kmers_all <- mutate(all_utrs_seqs, 
+                kmers = get_kmers(seq, n = 6)) %>% 
+                select(gene_id, start, end, kmers) %>% 
+  unnest() %>% 
+  group_by(gene_id, kmer) %>% 
+  summarize(counts = sum(counts)) %>% 
+  ungroup()
+
+kmers_mdeg <- filter(kmers_all, gene_id %in% m_deg$gene_id)
+kmers_mstb <- filter(kmers_all, gene_id %in% m_stb$gene_id)
+
+
+bg <- kmers_mstb %>% 
+  mutate(success = ifelse(counts >= 1, 1L, 0L)) %>% 
+  group_by(kmer) %>% 
+  summarize(counts = sum(success))
+
+kmer_count <- kmers_mdeg %>% 
+  mutate(success = ifelse(counts >= 1, 1L, 0L)) %>% 
+  group_by(kmer) %>% 
+  summarize(counts = sum(success))
+
+kmers_total <- left_join(kmer_count, 
+                         bg,
+                         by = "kmer",
+                         suffix = c("_test", "_bg"))
+
+kmers_total <- mutate(kmers_total, 
+                      n_seq_test = nrow(m_deg),
+                      n_seq_bg = nrow(m_stb)) %>% 
+  na.omit()
+
+out <- kmers_total %>% 
+  na.omit(.) %>%
+  rowwise() %>% 
+  do(broom::tidy(binom.test(.$counts_test, .$n_seq_test, 
+                     p = .$counts_bg / .$n_seq_bg),
+          alternative ="greater")) 
+
+res <- bind_cols(kmers_total, out) %>% 
+  mutate(padj = p.adjust(p.value),
+         prop.test = counts_test / n_seq_test,
+         prop.bg = counts_bg / n_seq_bg,
+         enrichment = log2(prop.test / prop.bg),
+         log10pval = -log10(padj)) %>% 
+  mutate(qtile = quantile(log10pval, .995),
+         enriched = ifelse(log10pval > qtile, T, F)) %>% 
+  arrange(padj)
+
+labeled_seqs <- filter(res, enriched)
+#labeled_seqs <- res
+
+library(ggrepel)
+mer6_plt <- ggplot(res, aes(enrichment, log10pval)) +
+  geom_point() +
+  geom_text_repel(data = labeled_seqs, 
+                  aes(label = kmer), color = "red", 
+                  force = 10) +
+  labs(title = "6mers enriched in 3' UTRs of degraded mRNAs versus stable", 
+       x = "enrichmenout (log2)")
+
+mer6_plt
+```
+
+
+```{r}
+gtf <- tidy_gtf(gtffile)
+
+all_utrs <- dplyr::filter(gtf, 
+                          type == "three_prime_utr")
+
+all_utrs <- group_by(all_utrs, transcript_id) %>% 
+  mutate(n = row_number(),
+         id = str_c(transcript_id, "_", n)) %>% 
+  select(chrom, start, end, id, transcript_id, strand) %>% 
+  ungroup() 
+
+all_utrs_seqs <- get_sequences(all_utrs, genomefile) 
+
+kmers_all <- mutate(all_utrs_seqs, 
+                kmers = get_kmers(seq, n = 6)) %>% 
+                select(transcript_id, start, end, kmers) %>% 
+  unnest() %>% 
+  group_by(transcript_id, kmer) %>% 
+  summarize(counts = sum(counts)) %>% 
+  ungroup()
+
+kmers_mdeg <- filter(kmers_all, transcript_id %in% z)
+kmers_mstb <- filter(kmers_all, transcript_id %in% m)
+
+
+bg <- kmers_mstb %>% 
+  mutate(success = ifelse(counts >= 1, 1L, 0L)) %>% 
+  group_by(kmer) %>% 
+  summarize(counts = sum(success))
+
+kmer_count <- kmers_mdeg %>% 
+  mutate(success = ifelse(counts >= 1, 1L, 0L)) %>% 
+  group_by(kmer) %>% 
+  summarize(counts = sum(success))
+
+kmers_total <- left_join(kmer_count, 
+                         bg,
+                         by = "kmer",
+                         suffix = c("_test", "_bg"))
+
+kmers_total <- mutate(kmers_total, 
+                      n_seq_test = length(z),
+                      n_seq_bg = length(m)) %>% 
+  na.omit()
+
+out <- kmers_total %>% 
+  na.omit(.) %>%
+  rowwise() %>% 
+  do(broom::tidy(binom.test(.$counts_test, .$n_seq_test, 
+                     p = .$counts_bg / .$n_seq_bg),
+          alternative ="greater")) 
+
+res <- bind_cols(kmers_total, out) %>% 
+  mutate(padj = p.adjust(p.value),
+         prop.test = counts_test / n_seq_test,
+         prop.bg = counts_bg / n_seq_bg,
+         enrichment = log2(prop.test / prop.bg),
+         log10pval = -log10(padj)) %>% 
+  mutate(qtile = quantile(log10pval, .995),
+         enriched = ifelse(log10pval > qtile, T, F)) %>% 
+  arrange(padj)
+
+labeled_seqs <- filter(res, enriched)
+#labeled_seqs <- res
+
+
+z_mer6_plt <- ggplot(res, aes(enrichment, log10pval)) +
+  geom_point() +
+  geom_text_repel(data = labeled_seqs, 
+                  aes(label = kmer), color = "red", 
+                  force = 10) +
+  labs(title = "3'UTR 6mers of zygotic isoforms", 
+       x = "enrichment (log2)")
+
+z_mer6_plt
+
+
+save_plot("kmers_utr_zyg_tx.pdf", z_mer6_plt, base_asp = 1.2)
+```

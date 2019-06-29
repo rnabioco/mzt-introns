@@ -24,6 +24,12 @@ mdata <- read_tsv(file.path(project_dir,
 gtffile <- "~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
 chromfile <- "~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
 genomefile <- "~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
+
+tx2gene <- import(gtffile) %>% 
+  as.data.frame() %>% 
+  filter(type == "transcript") %>% 
+  dplyr::select(gene_id, gene_name, transcript_id) %>% 
+  unique()
 ```
 
 ## kmer enrichment 
@@ -88,9 +94,15 @@ kmer_enrichment <- function(all_kmers,
 
 plot_kmers <- function(kmer_summary, 
                        plot_title = "Kmers enriched in promoters",
-                       n = ""){
+                       n = "",
+                       motif = "CAGGTAG"){
   
-  labeled_kmers <- filter(kmer_summary, enriched)
+  labeled_kmers <- mutate(kmer_summary, 
+                          enriched = ifelse(!enriched,
+                                            str_detect(kmer, motif) & 
+                                              log10pval < -log10(0.05),
+                                            enriched)) %>%
+                            filter(enriched)
   
   plt <- ggplot(kmer_summary,
                      aes(enrichment, log10pval)) +
@@ -108,8 +120,14 @@ plot_kmers <- function(kmer_summary,
 plot_counts <- function(tidy_mat, 
                         genes = c("FBgn0000008",
                                   "FBgn0000015"), 
-                        group = "strain") {
+                        group = "strain", 
+                        average_profile = FALSE) {
+  
+  pre_ids <-  add_pre(no_pre(genes))
+  mature_ids <- no_pre(genes)
+  
   res <- tidy_mat %>% 
+    filter(gene_id %in% c(pre_ids, mature_ids)) %>% 
     gather(sample, tpm, -gene_id) %>% 
     separate(sample, c("stage", "strain"), sep = "_")
   
@@ -117,23 +135,35 @@ plot_counts <- function(tidy_mat,
                 count_type = ifelse(str_detect(gene_id, "^pre"),
                                     "intron",
                                     "exon"),
-                gene_name_to_plot = str_remove(gene_id, "^pre_"))
+                gene_name_to_plot = no_pre(gene_id))
   
-  res <- filter(res, 
-                gene_name_to_plot %in% c(genes, str_remove(genes, "^pre_")))
+  ytitle <- "tpm"
   
+  if (average_profile){
+    res <- group_by(res, gene_id, 
+                    count_type, !!sym(group)) %>% 
+      mutate(zscore = zscore(tpm)) %>% 
+      group_by(stage, count_type, !!sym(group)) %>% 
+      summarize(tpm = mean(zscore, na.rm = T),
+                gene_name_to_plot = "Mean Profile") %>% 
+      ungroup()
+    genes <- "Mean Profile"
+    ytitle <- "Mean Z-score"
+  }
   plts <- map(genes, 
       function(gene) {
-        filter(res, gene_name_to_plot == str_remove(gene, "^pre_")) %>% 
+        filter(res, gene_name_to_plot == no_pre(gene)) %>% 
           ggplot(., aes(stage, tpm)) +
             geom_point(aes_string(color = group)) +
             facet_wrap(~ count_type, scales = "free_y") +
-           labs(title = gene) + 
+           labs(title = no_pre(gene),
+                y = ytitle) + 
            theme(axis.text.x = element_text(angle = 90, size = 2))
       })
   
   plts
 }
+
 ```
 
 Get promoter sequences for all genes (-2kbp to +500bp)
@@ -264,7 +294,6 @@ plts <- pmap(list(kmer_results,
 plt <- plot_grid(plotlist = plts, 
           ncol = 3,
           nrow = ceiling(length(plts) / 2))
-plt
 
 save_plot("promoter_kmer_enrichment_public_data.pdf",
           plt,
@@ -301,7 +330,9 @@ mean_exonic_tpms <- mean_tpms %>%
   left_join(de_res, by = c("gene_id" = "row"))
 
 #Calculate time to expression
-tpm_cut_off <- 0.25
+tpm_cut_off <- 0.50
+intron_tpm_cut_off <- 0.1
+
 mean_exonic_tpms <- mean_exonic_tpms %>% 
   select(gene_id:fasta_type, -fasta_type) %>% 
   gather(stage, tpm, -gene_id) %>% 
@@ -316,7 +347,7 @@ mean_exonic_tpms <- mean_exonic_tpms %>%
 mean_intronic_tpms <- mean_intronic_tpms %>% 
   select(gene_id:fasta_type, -fasta_type) %>% 
   gather(stage, tpm, -gene_id) %>% 
-  mutate(expressed = tpm > tpm_cut_off) %>% 
+  mutate(expressed = tpm > intron_tpm_cut_off) %>% 
   group_by(gene_id) %>% 
   arrange(stage, .by_group = TRUE) %>% 
   summarize(expr_tpt = stage[expressed][1], # get first tpt above tpm threshold
@@ -332,7 +363,7 @@ Select catagories
 
 
 fold_change_cutoff <- 1
-padj_cutoff <- 0.05
+padj_cutoff <- 0.01
 
 maternal_genes <- mean_exonic_tpms %>% 
   filter(`0-1 hr embryo` >= tpm_cut_off) %>% 
@@ -364,7 +395,7 @@ zygotic_genes_intron <- mean_intronic_tpms %>%
   unique()
 
 all_zygotic_combined <- unique(union(zygotic_genes_exon,
-                                        no_pre(zygotic_genes_intron)))
+                                     no_pre(zygotic_genes_intron)))
                               
 pure_zygotic_combined <- setdiff(all_zygotic_combined, maternal_genes)
 
@@ -377,6 +408,8 @@ pure_maternal <- setdiff(setdiff(maternal_genes,
 our_gene_lists <- lst(
   all_zygotic_combined,
   pure_zygotic_combined,
+  zygotic_genes_intron = no_pre(zygotic_genes_intron),
+  zygotic_genes_exon,
   mat_zyg_combined,
   pure_maternal
 )
@@ -406,13 +439,96 @@ save_plot("promoter_kmer_enrichment_our_data.pdf",
           base_aspect_ratio = 1.2)
 ```
 
-plot kmers by time to expression.
+
+### plot kmers by time to expression 
 
 maternal only -> early zyg -> late zyg
 
 ```{r}
-time_to_expr <- mean_exonic_tpms %>% 
+time_to_expr <- mean_exonic_tpms %>%
+  filter(!is.na(expr_tpt)) %>%
+  select(gene_id, expr_tpt)
+  
+time_to_expr <- mean_intronic_tpms %>% 
   filter(!is.na(expr_tpt)) %>% 
+  select(gene_id, expr_tpt) %>% 
+  mutate(gene_id = no_pre(gene_id)) %>%
+  left_join(., time_to_expr, by = "gene_id", suffix = c("_intron", "_exon")) %>%  # keep earliest called timepoint
+  mutate(expr_tpt = ifelse(expr_tpt_exon == "0-1 hr embryo" & !is.na(expr_tpt_intron),
+                           expr_tpt_intron,
+                           ifelse(expr_tpt_exon < expr_tpt_intron,
+                                  expr_tpt_exon,
+                                  expr_tpt_intron))) %>% 
+  select(-expr_tpt_intron, -expr_tpt_exon) 
+  
+zyg_time_to_expr <- filter(time_to_expr, 
+                           gene_id %in% our_gene_lists$all_zygotic_combined) %>% 
+  split(., .$expr_tpt) %>% 
+  map(., ~.x$gene_id) 
+
+zyg_time_to_expr <- zyg_time_to_expr[map_int(zyg_time_to_expr, length) > 3]
+
+kmer_results <- map(zyg_time_to_expr, 
+     ~kmer_enrichment(kmers_all_promoters, 
+                      group_1_genes = .x))
+
+plts <- pmap(list(kmer_results, 
+                  names(kmer_results),
+                  zyg_time_to_expr),
+            function(data, id, genes) {
+              ngenes <- length(unique(genes))
+              p <- plot_kmers(data, id, ngenes)
+              p})
+
+plt <- plot_grid(plotlist = plts, 
+          nrow = 2,
+          ncol = 2)
+
+save_plot("promoter_kmer_enrichment_our_data_stages_allzyg.pdf",
+          plt,
+          ncol = 2, nrow = 2, 
+          base_aspect_ratio = 1.2)
+
+zyg_time_to_expr <- filter(time_to_expr, 
+                           gene_id %in% our_gene_lists$mat_zyg_combined) %>% 
+  split(., .$expr_tpt) %>% 
+  map(., ~.x$gene_id) 
+
+zyg_time_to_expr <- zyg_time_to_expr[map_int(zyg_time_to_expr, length) > 3]
+
+kmer_results <- map(zyg_time_to_expr, 
+     ~kmer_enrichment(kmers_all_promoters, 
+                      group_1_genes = .x))
+
+plts <- pmap(list(kmer_results, 
+                  names(kmer_results),
+                  zyg_time_to_expr),
+            function(data, id, genes) {
+              ngenes <- length(unique(genes))
+              p <- plot_kmers(data, id, ngenes)
+              p})
+
+plt <- plot_grid(plotlist = plts, 
+          nrow = 2,
+          ncol = 2)
+
+save_plot("promoter_kmer_enrichment_our_data_stages_matzyg.pdf",
+          plt,
+          ncol = 2, nrow = 2, 
+          base_aspect_ratio = 1.2)
+
+
+
+
+matzyg_time_to_expr <- filter(time_to_expr, 
+                           gene_id %in% our_gene_lists$mat_zyg_combined) %>% 
+  split(., .$expr_tpt) %>% 
+  map(., ~.x$gene_id) 
+
+
+# for zygotic call time to expression based on whatever is earliest
+time_to_expr <- mean_exonic_tpms %>%
+  filter(!is.na(expr_tpt)) %>%
   select(gene_id, expr_tpt)
   
 time_to_expr <- mean_intronic_tpms %>% 
@@ -425,12 +541,6 @@ time_to_expr <- mean_intronic_tpms %>%
   dplyr::slice(1) %>% 
   ungroup()
 
-# time_to_expr <- mutate(time_to_expr, 
-#                        expr_tpt = ifelse(expr_tpt %in% c("0-1 hr embryo",
-#                                                          "1-2 hr embryo"),
-#                                          "early zygotic",
-#                                          "late zygotic"))
-  
 zyg_time_to_expr <- filter(time_to_expr, 
                            gene_id %in% our_gene_lists$pure_zygotic_combined) %>% 
   split(., .$expr_tpt) %>% 
@@ -453,9 +563,68 @@ plts <- pmap(list(kmer_results,
 plt <- plot_grid(plotlist = plts, 
           nrow = 2,
           ncol = 2)
+
+save_plot("promoter_kmer_enrichment_our_data_stages_zygonly.pdf",
+          plt,
+          ncol = 2, nrow = 2, 
+          base_aspect_ratio = 1.2)
+
+matzyg_df <- map_dfr(matzyg_time_to_expr, ~tibble(gene_id = .x), .id = "expr_tpt")
+zyg_df <- map_dfr(zyg_time_to_expr, ~tibble(gene_id = .x), .id = "expr_tpt")
+expr_tpt_class <- bind_rows(list(mat_zyg = matzyg_df,zyg = zyg_df ), .id = "class")
+
+
+
+```
+
+### only based on intron
+
+```{r}
+# time_to_expr <- mean_exonic_tpms %>%
+#   filter(!is.na(expr_tpt)) %>%
+#   select(gene_id, expr_tpt)
+
+zygotic_genes_intron_topn <- mean_intronic_tpms %>% 
+     filter(padj < padj_cutoff, 
+            log2FoldChange > fold_change_cutoff,
+            max_tpm > intron_tpm_cut_off) %>% 
+    arrange(padj) %>%
+    pull(gene_id) %>% 
+  no_pre () %>% 
+  unique()
+
+time_to_expr <- mean_intronic_tpms %>% 
+  filter(!is.na(expr_tpt)) %>% 
+  select(gene_id, expr_tpt) %>% 
+  mutate(gene_id = no_pre(gene_id)) 
+  
+zyg_int_time_to_expr <- filter(time_to_expr, 
+                           gene_id %in% zygotic_genes_intron_topn) %>% 
+  split(., .$expr_tpt) %>% 
+  map(., ~.x$gene_id) 
+
+zyg_int_time_to_expr <- zyg_int_time_to_expr[map_int(zyg_int_time_to_expr, length) > 3]
+zyg_int_time_to_expr <- zyg_int_time_to_expr[-1]
+
+kmer_results <- map(zyg_int_time_to_expr, 
+     ~kmer_enrichment(kmers_all_promoters, 
+                      group_1_genes = .x))
+
+plts <- pmap(list(kmer_results, 
+                  names(kmer_results),
+                  zyg_int_time_to_expr),
+            function(data, id, genes) {
+              ngenes <- length(unique(genes))
+              p <- plot_kmers(data, id, ngenes)
+              p})
+
+plt <- plot_grid(plotlist = plts, 
+          nrow = 2,
+          ncol = 2)
 plt
 
-save_plot("promoter_kmer_enrichment_our_data_stages.pdf",
+
+save_plot("promoter_kmer_enrichment_our_data_stages_intron.pdf",
           plt,
           ncol = 2, nrow = 2, 
           base_aspect_ratio = 1.2)
@@ -472,6 +641,63 @@ plt <- plot_grid(plotlist = plts,
 save_plot("zyg_counts.pdf", plt, ncol = 1, nrow = length(plts))
 ```
 
+
+
+
+
+
+
+### only based on exon
+
+```{r}
+ time_to_expr <- mean_exonic_tpms %>%
+   filter(!is.na(expr_tpt)) %>%
+   select(gene_id, expr_tpt)
+
+zyg_exon_time_to_expr <- filter(time_to_expr, 
+                           gene_id %in% our_gene_lists$zygotic_genes_exon) %>% 
+  split(., .$expr_tpt) %>% 
+  map(., ~.x$gene_id) 
+
+zyg_exon_time_to_expr <- zyg_exon_time_to_expr[map_int(zyg_exon_time_to_expr, length) > 3]
+zyg_exon_time_to_expr <- zyg_exon_time_to_expr[-1]
+
+kmer_results <- map(zyg_exon_time_to_expr, 
+     ~kmer_enrichment(kmers_all_promoters, 
+                      group_1_genes = .x))
+
+plts <- pmap(list(kmer_results, 
+                  names(kmer_results),
+                  zyg_exon_time_to_expr),
+            function(data, id, genes) {
+              ngenes <- length(unique(genes))
+              p <- plot_kmers(data, id, ngenes)
+              p})
+
+plt <- plot_grid(plotlist = plts, 
+          nrow = 2,
+          ncol = 2)
+plt
+
+
+save_plot("promoter_kmer_enrichment_our_data_stages_exon.pdf",
+          plt,
+          ncol = 2, nrow = 2, 
+          base_aspect_ratio = 1.2)
+```
+
+
+```{r}
+
+plts <- plot_counts(tpms, no_pre(pure_zygotic_intron[1:10]))
+
+plt <- plot_grid(plotlist = plts, 
+          ncol = 1)
+
+save_plot("zyg_counts.pdf", plt, ncol = 1, nrow = length(plts))
+
+plt
+```
 
 ## plot ma
 
@@ -525,9 +751,451 @@ ma_plot <- ggplot(tmp_plt_dat %>% filter(padj < 0.05),
 
 ma_plot
 
-save_plot("ma_plot_count_type.pdf", ma_plot, base_aspect_ratio = 1)
+save_plot("ma_plot_count_type.pdf", 
+          ma_plot, 
+          base_aspect_ratio = 1)
 ```
 
 
-Take public gene set, and plot out expression with our data, and similarly kmers for expression time points. 
+
+
+```{r}
+gtf <- tidy_gtf(gtffile)
+exon_counts <- gtf %>% 
+  filter(type == "exon") %>% 
+  select(gene_id, exon_number)  %>% 
+  group_by(gene_id) %>% 
+  summarize(exon_count = max(exon_number),
+            multiexon = ifelse(exon_count > 1,
+                               TRUE,
+                               FALSE))
+
+classes_df <- list(pure_zygotic = tibble(gene_id = our_gene_lists$pure_zygotic_combined),
+                mat_zyg =  tibble(gene_id = our_gene_lists$mat_zyg_combined),
+                maternal = tibble(gene_id = our_gene_lists$pure_maternal)) %>% 
+  bind_rows(.id = "class")
+
+classes_df <- left_join(classes_df, 
+          exon_counts, 
+          by = "gene_id")
+
+gene_set_summary <- map(public_gene_sets, 
+    ~filter(classes_df, gene_id %in% .x) %>% 
+      mutate(
+        n_genes = nrow(.),
+        prop_multi_exonic = sum(multiexon) / n_genes) %>% 
+      group_by(class, n_genes, prop_multi_exonic) %>% 
+      summarize(genes_in_class = n()) %>% 
+      ungroup() %>% 
+      mutate(proportion_in_class = genes_in_class / n_genes) %>% 
+      select(-genes_in_class))
+
+
+gene_set_summary %>% 
+  bind_rows(.id = "gene_set")
+```
+
+
+
+## Summary table
+
+
+```{r}
+genename2id
+
+select(mean_intronic_tpms, -fasta_type, -lfcSE, -stat, -pvalue)
+
+mean_exonic_tpms
+
+```
+
+
+
+Pull out the following interesting gene sets for validation:
+
+1) Purely zygotic:
+  - Called by zygotic by both exon and intron counts
+  - Called zygotic by only intronic (why would this be? usually weird annotations (overlapping gene on same strand))
+
+2) Maternal and Zygotic:
+  - Called Maternal only by exonic but called zygotic by intron
+  
+3) Maternal:
+  - Called Maternal only by either
+  
+  
+Note that some pre_mRNAs have no corresponding mRNAs in the dataset. This happened due to salmon removing duplicated transcripts. Therefore these pre_mRNAs will be excluded. 
+
+
+```{r}
+dup_clusters <- read_tsv(file.path("../../dbases/", 
+                                   "drosophila", 
+                                   "salmon", 
+                                   "primary_transcripts_masked", 
+                                   "duplicate_clusters.tsv"))
+
+tx2gene <- gtf %>% 
+  filter(type == "transcript") %>% 
+   select(gene_id, transcript_id) %>% 
+   unique()
+
+tx_duplicated <- mutate(tx2gene, 
+                      duplicated = transcript_id %in% dup_clusters$DuplicateTxp) %>% 
+  group_by(gene_id) %>% 
+  summarize(all_duplicated = all(duplicated)) %>% 
+  filter(all_duplicated)
+
+
+mean_exonic_tpms <- mean_exonic_tpms %>% 
+  filter(!gene_id %in% tx_duplicated$gene_id)
+
+mean_intronic_tpms <- mean_intronic_tpms %>% 
+  filter(!no_pre(gene_id) %in% tx_duplicated$gene_id)
+```
+
+
+```{r}
+
+fold_change_cutoff <- 1
+padj_cutoff <- 0.05
+intron_min_tpm <- 0.10
+
+maternal_genes <- mean_exonic_tpms %>% 
+  filter(`0-1 hr embryo` >= tpm_cut_off) %>% 
+  pull(gene_id) %>% 
+  unique()
+
+maternal_genes <- mean_intronic_tpms %>% 
+  filter(`0-1 hr embryo` >= intron_min_tpm) %>% 
+  pull(gene_id) %>% 
+  no_pre() %>% 
+  unique() %>% 
+  c(., maternal_genes) %>% 
+  unique()
+
+zygotic_genes_exon <- mean_exonic_tpms %>% 
+     filter(padj < padj_cutoff, 
+            log2FoldChange > fold_change_cutoff,
+            max_tpm > tpm_cut_off) %>% 
+  arrange(padj) %>% 
+  pull(gene_id) %>% 
+  unique()
+
+zygotic_genes_intron <- mean_intronic_tpms %>% 
+     filter(padj < padj_cutoff, 
+            log2FoldChange > fold_change_cutoff,
+            max_tpm > intron_min_tmp) %>% 
+    arrange(padj) %>%
+  pull(gene_id) %>% 
+  unique()
+
+all_zygotic_both <- unique(intersect(zygotic_genes_exon,
+                                     no_pre(zygotic_genes_intron)))
+                              
+all_zygotic_either <- unique(union(zygotic_genes_exon,
+                                     no_pre(zygotic_genes_intron)))
+
+pure_zygotic <- setdiff(all_zygotic_both, maternal_genes)
+
+                              
+# called zygotic by intron but maternal by exon
+mat_zyg_intron_class <- intersect(no_pre(zygotic_genes_intron), maternal_genes)
+
+# called zygotic by either but maternal by either
+mat_zyg_combined <- c(intersect(zygotic_genes_exon, maternal_genes),
+                      mat_zyg_intron_class) %>% 
+  unique()
+
+
+pure_maternal <- setdiff(setdiff(maternal_genes, 
+                                 mat_zyg_combined),
+                         all_zygotic_either)
+
+our_new_gene_lists <- lst(
+  all_zygotic_both,
+  all_zygotic_either,
+  pure_zygotic,
+  mat_zyg_intron_class,
+  mat_zyg_combined,
+  pure_maternal
+)
+
+
+plot_avg_expr <- function(dat, genes){
+  plot_dat <- dat %>%
+    filter(gene_id %in% genes) %>% 
+    select(gene_id:`4-5 hr embryo`) %>% 
+    gather(tpt, expr, -gene_id) %>% 
+    group_by(tpt) %>% 
+    summarize(mean_expr = mean(expr, na.rm = T))
+  
+  ggplot(plot_dat, aes(x = tpt , y = mean_expr)) +
+    geom_point() +
+    ylim(c(0, max(plot_dat$mean_expr)))
+}
+
+
+plts <- imap(our_new_gene_lists,
+    function(x, y ){
+      a <- plot_avg_expr(mean_intronic_tpms, add_pre(x)) +
+        labs(title = y)
+      b <- plot_avg_expr(mean_exonic_tpms, no_pre(x))
+      plot_grid(a, b)})
+
+
+plot_grid(plotlist = plts, ncol = 1)
+```
+
+
+```{r}
+
+
+new_class_names <- c(
+  "pure_zygotic" = "zygotic_only",
+  "mat_zyg_intron_class" = "maternal_and_zygotic",
+  "pure_maternal" = "maternal_only"
+)
+summary_info <- map_dfr(our_new_gene_lists,
+        ~tibble(gene_id = .x), .id = "classification") %>% 
+  filter(classification %in% c("pure_zygotic",
+                               "mat_zyg_intron_class",
+                               "pure_maternal")) %>% 
+  left_join(genename2id, by = "gene_id") %>% 
+  mutate(classification = new_class_names[classification])
+  
+
+mean_exonic_tpms_simple <- select(mean_exonic_tpms, gene_id:`4-5 hr embryo`, log2FoldChange, padj, expr_tpt, max_tpm)
+
+
+mean_intronic_tpms_simple <- select(mean_intronic_tpms, gene_id:`4-5 hr embryo`, 
+                                    log2FoldChange, padj, expr_tpt, max_tpm) %>% 
+  mutate(gene_id = no_pre(gene_id))
+
+
+expr_summary <- left_join(mean_exonic_tpms_simple, 
+          mean_intronic_tpms_simple,
+          by = "gene_id",
+          suffix = c("_exon", "_intron"))
+
+summary_out <- left_join(summary_info, expr_summary, by = "gene_id")
+
+
+summaries <- split(summary_out, summary_out$classification)
+
+# add crude quantile ranking based on intron for mat/zyg or zyg
+
+summaries$maternal_and_zygotic <- summaries$maternal_and_zygotic %>%
+  mutate(rank_pval = ntile(padj_intron, 10), 
+                   rank_expr = ntile(rev(log10(max_tpm_intron)), 10)) %>% 
+      arrange(rank_pval, desc(rank_expr))
+
+
+summaries$zygotic_only <- summaries$zygotic_only %>%
+  mutate(rank_pval = ntile(padj_intron, 10), 
+                   rank_expr = ntile(log10(max_tpm_intron), 10)) %>% 
+      arrange(rank_pval, desc(rank_expr))
+
+summaries$maternal_only <- summaries$maternal_only %>%
+  mutate(rank_pval = ntile(padj_exon, 10), 
+                   rank_expr = ntile(log10(max_tpm_exon), 10)) %>% 
+      arrange(rank_pval, desc(rank_expr))
+
+
+# Check if previously reported
+summaries$zygotic_only <- mutate(summaries$zygotic_only, 
+                                 previously_reported = gene_id %in% public_gene_sets$derenzis_pure_zygotic) %>% 
+  filter(!previously_reported)
+
+summaries$maternal_and_zygotic <- mutate(summaries$maternal_and_zygotic, 
+                                  previously_reported = gene_id %in% public_gene_sets$derenzis_mat_zygotic) %>% 
+  filter(!previously_reported)
+
+
+
+# add in positional information
+pos_info <- gtf %>%
+  filter(type == 'gene') %>%
+  select(chrom, start, end, gene_id, strand) %>% 
+  unique() %>% 
+  mutate(query_format = str_c(chrom, ":", start, "-", end))
+
+
+summaries <- map(summaries, 
+    ~left_join(.x, pos_info, by = "gene_id"))
+
+out_dir <- "summary_files"
+dir.create(out_dir)
+imap(summaries, ~write_tsv(.x, file.path(out_dir, str_c("summary_", .y, ".tsv"))))
+
+
+
+
+readme_text <- c(
+  "Column definitions:",
+  "classification: one of maternal_only, maternal_and_zygotic, and zygotic_only",
+  "gene_id: gene identifier",
+  "gene_name: gene symbol",
+  "0-1hr embryo_exon throuhg 4-5hr embryo_exon: mean tpm values for exonic abundance",
+  "log2FoldChange_exon: log2 fold change between pre-mzt and post-mzt stages (positive is higher abundance in post-mzt)",
+  "padj_exon: adjusted p-value",
+  "expr_tpt_exon: first time point with detectable expression (>0)",
+  "max_tpm_exon: maximum tpm value observed in time course",
+  "*_intron: same definitions as above, but for intronic abundance",
+  "rank_pval: quantile ranking (split into 10 quantiles) 1 = lowest p-value",
+  "rank_expr: quantile ranking (split into 10 quantiles) 10 = highest abundance",
+  "previously_reported: boolean, whether or not the gene was classified in the same class in the De Renzis study",
+  "chrom - query_format: columns with genomic positions"
+)
+
+write_lines(readme_text, file.path(out_dir, "README.txt"))
+
+openxlsx::write.xlsx(c(list(readme = readme_text), summaries), file.path(out_dir, "summary_expression.xlsx"))
+```
+
+
+
+
+```{r}
+ time_to_expr <- mean_intronic_tpms %>%
+   filter(!is.na(expr_tpt)) %>%
+   select(gene_id, expr_tpt)
+
+zyg_exon_time_to_expr <- filter(time_to_expr, 
+                           no_pre(gene_id) %in% no_pre(zygotic_genes_intron)) %>% 
+  split(., .$expr_tpt) %>% 
+  map(., ~no_pre(.x$gene_id)) 
+
+zyg_exon_time_to_expr <- zyg_exon_time_to_expr[map_int(zyg_exon_time_to_expr, length) > 3]
+zyg_exon_time_to_expr <- zyg_exon_time_to_expr[-1]
+
+kmer_results <- map(zyg_exon_time_to_expr, 
+     ~kmer_enrichment(kmers_all_promoters, 
+                      group_1_genes = .x))
+
+plts <- pmap(list(kmer_results, 
+                  names(kmer_results),
+                  zyg_exon_time_to_expr),
+            function(data, id, genes) {
+              ngenes <- length(unique(genes))
+              p <- plot_kmers(data, id, ngenes)
+              p})
+
+plt <- plot_grid(plotlist = plts, 
+          nrow = 2,
+          ncol = 2)
+plt
+
+
+# save_plot("promoter_kmer_enrichment_our_data_stages_exon.pdf",
+#           plt,
+#           ncol = 2, nrow = 2, 
+#           base_aspect_ratio = 1.2)
+```
+
+
+
+
+
+## Zelda enrichment
+
+```{r eisen_dat}
+if(!file.exists("eisen_zelda_chip.tsv")){
+  download.file("https://doi.org/10.1371/journal.pgen.1002266.s007", "eisen_zelda_chip.tsv")
+}
+
+zelda_chip <- read_tsv("eisen_zelda_chip.tsv", 
+              col_names = T, 
+              skip = 1)
+
+zelda_peaks <- dplyr::select(zelda_chip,
+                             chrom = Chr, 
+                             start = From,
+                             end = To,
+                             gene = TSS_gene,
+                             dist = TSS_dist,
+                             score = Height)
+
+gene_id_to_name <- tx2gene %>% 
+  dplyr::select(gene_id, gene_name) %>% 
+  unique()
+zelda_10k <- zelda_peaks %>% 
+  filter(dist <= 10000) %>% 
+  left_join(gene_id_to_name, by = c("gene" = "gene_name"))
+  
+  
+zelda_10k_summed <- group_by(zelda_10k, gene, gene_id) %>%
+  summarize(binding_sites = n(),  
+            score = max(score))
+
+
+```
+
+```{r}
+# for zygotic call time to expression based on whatever is earliest
+time_to_expr <- mean_exonic_tpms %>%
+  filter(!is.na(expr_tpt)) %>%
+  select(gene_id, expr_tpt)
+  
+time_to_expr <- mean_intronic_tpms %>% 
+  filter(!is.na(expr_tpt)) %>% 
+  select(gene_id, expr_tpt) %>% 
+  mutate(gene_id = no_pre(gene_id)) %>% 
+  bind_rows(., time_to_expr) %>%  # keep earliest called timepoint
+  group_by(gene_id) %>% 
+  arrange(expr_tpt, .by_group = T) %>% 
+  dplyr::slice(1) %>% 
+  ungroup()
+
+zyg_time_to_expr <- filter(time_to_expr, 
+                           gene_id %in% our_gene_lists$pure_zygotic_combined) %>% 
+  split(., .$expr_tpt) %>% 
+  map(., ~.x$gene_id) 
+
+zyg_time_to_expr <- zyg_time_to_expr[map_int(zyg_time_to_expr, length) > 3]
+
+clusters <- zyg_time_to_expr %>% map_dfr(~tibble(gene_name = .x), .id = "cluster")
+
+```
+
+```{r diff_genes}
+de_res_chip <- left_join(de_res,
+                    zelda_10k_summed,
+                    by = c("row" = "gene_id")) %>% 
+  mutate(binding_sites = ifelse(is.na(binding_sites),
+                                0,
+                                binding_sites),
+         score = ifelse(is.na(score),
+                        0,
+                        score))
+   #      score = log2(score + 1))
+
+
+de_res_chip <- left_join(de_res_chip, clusters, by = c("row" = "gene_name"))
+
+cluster_res <- de_res_chip %>% 
+  filter(!is.na(cluster)) %>% 
+  dplyr::rename(gene_id = row)
+
+annotation_data <- cluster_res[, c("gene_id", "score", "binding_sites", "cluster")] %>%
+  as.data.frame()
+
+rownames(annotation_data) <- annotation_data[, 1]
+annotation_data[, 1] <- NULL
+```
+
+```{r zld_binding}
+plt_data <- mutate(cluster_res, 
+                   cluster = as.character(cluster))
+score <- ggplot(plt_data, 
+       aes(cluster, score)) +
+  geom_violin(aes(fill = cluster), draw_quantiles = 0.50) +
+  scale_fill_viridis_d(name = "") +
+  labs(y = "Zelda Chip-seq Signal", x = "") +
+  theme(legend.pos = "none",
+        axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+save_plot("zelda_binding.pdf", score, base_asp = 1.2)
+score
+```
+
 

@@ -127,15 +127,9 @@ get_3utrs <- function(gtf_file,
                       gene_col = "gene_id",
                       transcript_col = "transcript_id") {
   
-  gtf <- import(gtf_file)
-  gtf <- as.data.frame(gtf)
-  gtf <- mutate_if(gtf, is.factor, as.character)
+  gtf <- tidy_gtf(gtf_file)
+  
   gtf <- filter(gtf, gene_id %in% gene_ids)
-  gtf <- dplyr::select(gtf,
-                       chrom = seqnames,
-                       start, end, type, strand, 
-                       exon_id, 
-                       one_of(c(gene_col, transcript_col)))
   
   gtf <- dplyr::filter(gtf,
                        type %in% c("exon", "CDS"))
@@ -189,6 +183,7 @@ get_3utrs <- function(gtf_file,
     filter(start != end) %>%
     select(chrom:transcript_id)
   
+  utr3_res <- ungroup(utr3_res)
   utr3_res <- mutate(utr3_res, start = start - 1)
   utr3_res <- mutate_if(utr3_res, is.factor, as.character)
   res <- group_by(utr3_res, gene_id, strand) %>%
@@ -237,3 +232,61 @@ add_pre <- function(chr_vec, pattern = "pre_"){
 no_pre <- function(chr_vec, pattern = "^pre_"){
   str_remove(chr_vec, pattern)
 }  
+
+#' calc zscore
+zscore <- function(x) { (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE)}
+
+#' library->sample df
+#' 
+plot_expr <- function(genes, 
+                      cts, 
+                      lib_to_sample, 
+                      group = NULL,
+                      facet = NULL){
+
+  long_tidy <- cts[genes, , drop = FALSE] %>%
+    as.data.frame(.) %>%
+    rownames_to_column("gene") %>%
+    gather(sample, expr, -gene)
+  
+  join_col <- colnames(lib_to_sample)[1]
+  plt_dat <- left_join(long_tidy,
+                       lib_to_sample, 
+                       by = c("sample" = join_col))
+  
+  add_facet <- !is.null(facet)
+  add_group <- !is.null(group)
+  
+  if(add_group && !add_facet){
+    grp <- sym(group)
+    plt_dat <- group_by(plt_dat, !!grp) %>% 
+      summarize(expr = mean(expr)) %>% 
+      ungroup() %>% 
+      dplyr::rename(sample = !!grp)
+  } else if (!add_group && add_facet){
+    grp <- sym(group)
+    fac <- sym(facet)
+    plt_dat <- group_by(plt_dat, !!grp, !!fac) %>% 
+      summarize(expr = mean(expr)) %>% 
+      ungroup() %>% 
+      dplyr::rename(sample = !!grp)
+  }
+  
+  p <- ggplot(plt_dat, aes(sample, expr)) +
+    geom_point() +
+    labs(x = "",
+         y = "Expression")
+    
+  if (add_facet){
+    p <- p + facet_wrap(as.formula(paste("~", facet)))
+  }
+  
+  if(length(genes) == 1){
+    p <- p + labs(title = genes)
+  }
+  
+  p + 
+    theme_cowplot() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+}
+

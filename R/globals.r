@@ -16,12 +16,12 @@ library(jsonlite)
 library(rtracklayer)
 library(ComplexHeatmap)
 library(tximport)
-#library(edgeR)
 library(DESeq2)
 library(tibble)
 library(here)
 library(kentr)
 library(ggrepel)
+
 #### Paths ####
 
 project_dir <- here()

@@ -252,7 +252,8 @@ rissland_files <- map(fa_types,
 
 tids <- read_tsv(eichorn_files[[1]][1]) %>% 
   dplyr::select(Name)
-tx2gene <-gtf %>% 
+
+tx2gene <- gtf %>% 
   filter(type == "transcript") %>% 
   select(transcript_id, gene_id) %>% 
   tbl_df() %>% 
@@ -819,7 +820,8 @@ mer8_plt
 
 
 plt <- plot_grid(mer6_plt, mer7_plt, mer8_plt, nrow = 1, ncol = 3)
-save_plot("kmer_enrichment.pdf", plt, nrow = 1, ncol = 3, base_height = 6)
+save_plot("kmer_utr_enrichment.pdf", 
+          plt, nrow = 1, ncol = 3, base_height = 6)
 
 ```
 
@@ -992,6 +994,7 @@ plot_kmers <- function(kmer_summary,
 
 
 ```
+
 
 ```{r}
 kmers_all_genes <- mutate(all_tss_seqs, 
@@ -1237,3 +1240,6 @@ save_plot("promoter_kmer_enrichment_our_data_stages.pdf",
           ncol = 2, nrow = 2, 
           base_aspect_ratio = 1.2)
 ```
+
+
+
