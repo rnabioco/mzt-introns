@@ -1,10 +1,43 @@
 
 """ rules to generate bigwigs """
 
+def _get_bedgraphs(wildcards):
+  
+  """ lookup global dictionary LIB_MAP via sample
+      wildcard and return settings for strand 
+      based on experiment definition in config file 
+  """
+  id = os.path.basename(wildcards.sample)
+  if id in LIB_MAP:
+     lib_attrs = LIB_MAP[id]
+     strand_settings = config[lib_attrs]["stranded"]
+  else:
+     print("WARNING: no stranded settings found for library: {}".format(id),
+       file = sys.stderr)
+     strand_settings = ""
+  
+  bg_fns = []
+  bg_basename = path.join(DATA, 
+                          "star", 
+                          wildcards.species,
+                          wildcards.expt)
+
+  if strand_settings == "forward":
+    fwd_bg = wildcards.sample + "_Signal.UniqueMultiple.str1.out.bg"
+    rev_bg = wildcards.sample + "_Signal.UniqueMultiple.str2.out.bg"
+  elif strand_settings == "reverse":
+    fwd_bg = wildcards.sample + "_Signal.UniqueMultiple.str2.out.bg"
+    rev_bg = wildcards.sample + "_Signal.UniqueMultiple.str1.out.bg"
+  else:
+    sys.exit("unknown setting for stranded: {}".format(strand_settings))
+
+  bg_fns = [path.join(bg_basename, x) for x in [fwd_bg, rev_bg]]
+
+  return bg_fns
+
 rule make_bigwigs:
   input:
-    forward = path.join(DATA, "star", "{species}", "{expt}", "{sample}_Signal.Unique.str2.out.bg"),
-    reverse = path.join(DATA, "star", "{species}", "{expt}", "{sample}_Signal.Unique.str1.out.bg"),
+    _get_bedgraphs
   output:
     fwd = path.join(DATA, "bigwigs", "{species}", "{expt}", "{sample}_fwd.bw"),
     rev = path.join(DATA, "bigwigs", "{species}", "{expt}", "{sample}_rev.bw"),
@@ -20,15 +53,15 @@ rule make_bigwigs:
   resources: all_threads=1
   shell:
     """
-    awk 'NF != 6' {input.forward} | bedSort stdin {input.forward}.sort
-    awk 'NF != 6' {input.reverse} | bedSort stdin {input.reverse}.sort
+    awk 'NF != 6' {input[0]} | bedSort stdin {input[0]}.sort
+    awk 'NF != 6' {input[1]} | bedSort stdin {input[1]}.sort
 
-    bedGraphToBigWig {input.forward}.sort {params.chroms} {output.fwd}
-    bedGraphToBigWig {input.reverse}.sort {params.chroms} {output.rev}
-    awk '{{$4=$4*-1; print}}' {input.reverse}.sort > {input.reverse}.tmp
+    bedGraphToBigWig {input[0]}.sort {params.chroms} {output.fwd}
+    bedGraphToBigWig {input[1]}.sort {params.chroms} {output.rev}
+    awk '{{$4=$4*-1; print}}' {input[1]}.sort > {input[1]}.tmp
     
-    bedGraphToBigWig {input.reverse}.tmp {params.chroms} {output.revneg}
+    bedGraphToBigWig {input[1]}.tmp {params.chroms} {output.revneg}
 
-    rm {input.reverse}.tmp {input.forward}.sort {input.reverse}.sort
+    rm {input[1]}.tmp {input[0]}.sort {input[1]}.sort
     
     """

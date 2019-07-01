@@ -11,7 +11,6 @@ configfile: "config.yaml"
 DATA = config["DATA"]
 SRC = config["SRC"]
 DBASES = config["DBASES"]
-MMR = config["MMR"]
 SPLICE_JUNCTS = config["SPLICE_JUNCTS"]
 
 # The following are all dictionaries that are accessed using functions in 
@@ -56,6 +55,17 @@ print("processing the following libraries")
 [print("library {} from species {} from experiment {}".format(x,
                                                               SPECIES[i],
                                                               LIB_MAP[x])) for i, x in enumerate(SAMPLES)]
+FASTA_TYPES = [
+  #"original_gtf",
+  "primary_transcripts",
+  "primary_transcripts_masked",
+  #"primary_transcripts_masked_exons"
+  ]
+ 
+genesets = ["mzt_cluster", 
+           "pre_mzt_cluster"]
+
+genesets_rna = ["downregulated_utrs"]
 
 rule all:
   input:  
@@ -63,59 +73,84 @@ rule all:
     expand(path.join(DATA, "star", "logs", "{species}_index_tracking.txt"),
             zip, species = SPECIES),
 
-    #expand(path.join(DATA, "star", "{species}", "{expt}", "{sample}_sorted.bam"),
-    #        zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
+    expand(path.join(DATA, "star", "{species}", "{expt}", "{sample}_sorted.bam"),
+            zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
     
-    #expand(path.join(DATA, "star", "{species}", "{expt}", "{sample}_sorted.bam.bai"),
-    #        zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
+    expand(path.join(DATA, "star", "{species}", "{expt}", "{sample}_sorted.bam.bai"),
+            zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
     
     #### salmon quantification ####
 
-    expand(path.join(DATA, "salmon", "{species}", "{expt}", "{sample}", "quant.sf"),
-            zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
+   # expand(path.join(DATA, "salmon", "{species}", "{expt}", "{sample}", "quant.sf"),
+   #        zip, sample = SAMPLES, expt = EXPTS, species = SPECIES),
     
-    expand(path.join(DATA, "salmon", "{species}", "{expt}", "{fasta}", "{sample}", "quant.sf"),
-            zip, sample = 2 * SAMPLES, expt = 2 * EXPTS, species = 2 * SPECIES,
-            fasta = len(SAMPLES) * ["primary_transcripts_masked",
-                     "primary_transcripts_masked_exons"]),
+    expand(path.join(DATA, "salmon", "{species}", "{expt}", "primary_transcripts", "{sample}", "quant.sf"),
+           zip, 
+           sample = len(FASTA_TYPES) * SAMPLES, 
+           expt = len(FASTA_TYPES) * EXPTS , 
+           species = len(FASTA_TYPES) * SPECIES,
+           fasta = len(SAMPLES) * FASTA_TYPES), 
+    
+    expand(path.join(DATA, "salmon", "{species}", "{expt}", "primary_transcripts_masked", "{sample}", "quant.sf"),
+           zip, 
+           sample = len(FASTA_TYPES) * SAMPLES, 
+           expt = len(FASTA_TYPES) * EXPTS , 
+           species = len(FASTA_TYPES) * SPECIES,
+           fasta = len(SAMPLES) * FASTA_TYPES), 
 
-    #### bowtie2 alignment ####
-    expand(path.join(DBASES, "{species}", "bt2", "{fasta}.1.bt2"),
-            zip, species = SPECIES, 
-            fasta = ["primary_transcripts_masked",
-                     "primary_transcripts_masked_exons"]),
+   # ### bowtie2 
+    #expand(path.join(DBASES, "{species}", "bt2", "{fasta}.1.bt2"),
+    #       zip, species = SPECIES, 
+    #       fasta = FASTA_TYPES),
 
-    expand(path.join(DATA, "bt2", "{species}", "{expt}", "{fasta}", "{sample}.bam"),
-            zip, sample = 2 * SAMPLES, expt = 2 * EXPTS, species = 2 * SPECIES, 
-            fasta = len(SAMPLES) * ["primary_transcripts_masked",
-                     "primary_transcripts_masked_exons"]),
+   # expand(path.join(DATA, "bt2", "{species}", "{expt}", "{fasta}", "{sample}.bam"),
+   #         zip, 
+   #         sample = len(FASTA_TYPES) * SAMPLES, 
+   #         expt = len(FASTA_TYPES) * EXPTS, 
+   #         species = len(FASTA_TYPES) * SPECIES,
+   #         fasta = len(SAMPLES) * FASTA_TYPES), 
 
-    expand(path.join(DATA, "salmon_bt2_masked", "{species}", "{expt}", "{fasta}", "{sample}", "quant.sf"),
-            zip, sample = 2 * SAMPLES, expt = 2 * EXPTS, species = 2 * SPECIES,
-            fasta = len(SAMPLES) * ["primary_transcripts_masked",
-                     "primary_transcripts_masked_exons"]),
+   # expand(path.join(DATA, "salmon_bt2_masked", "{species}", "{expt}", "{fasta}", "{sample}", "quant.sf"),
+   #         zip, 
+   #         sample = len(FASTA_TYPES) * SAMPLES, 
+   #         expt = len(FASTA_TYPES) * EXPTS, 
+   #         species = len(FASTA_TYPES) * SPECIES,
+   #         fasta = len(SAMPLES) * FASTA_TYPES), 
             
-    #### bigwigs ####
-    #expand(path.join(DATA, "bigwigs", "{species}", "{expt}", "{sample}_{orient}.bw"),
-    #  zip, sample = SAMPLES, species = SPECIES, expt = EXPTS, orient = len(SAMPLES) * ["fwd", "rev", "rev_neg"]),
+   # #### bigwigs ####
+    expand(path.join(DATA, "bigwigs", "{species}", "{expt}", "{sample}_{orient}.bw"),
+      zip, sample = SAMPLES, species = SPECIES, expt = EXPTS, orient = len(SAMPLES) * ["fwd", "rev", "rev_neg"]),
 
     #### exon/intron counts ####
-   # expand(path.join(DATA, "featurecounts", "{species}", 
-   #                  "{expt}", "{sample}_exon_counts.tsv"),
-   #   zip, sample = SAMPLES, species = SPECIES, expt = EXPTS),
-   # 
-   # expand(path.join(DATA, "featurecounts", "{species}", 
-   #                  "{expt}", "{sample}_intron_counts.tsv"),
-   #   zip, sample = SAMPLES, species = SPECIES, expt = EXPTS),
+    expand(path.join(DATA, "featurecounts", "{species}", 
+                     "{expt}", "{sample}_exon_counts.tsv"), 
+                     zip, sample = SAMPLES, species = SPECIES, expt = EXPTS),
     
-    ##### qc ####
-    #expand(path.join(DATA, "qc", "fastqc", "{species}", "{expt}", "{sample}_fastqc/summary.txt"),
-    #  zip, sample = SAMPLES, expt = EXPTS, species = SPECIES)
+    expand(path.join(DATA, "featurecounts", "{species}", 
+                     "{expt}", "{sample}_intron_counts.tsv"),
+                     zip, sample = SAMPLES, species = SPECIES, expt = EXPTS),
+    
+   # ##### qc ####
+   # #expand(path.join(DATA, "qc", "fastqc", "{species}", "{expt}", "{sample}_fastqc/summary.txt"),
+   # #  zip, sample = SAMPLES, expt = EXPTS, species = SPECIES)
 
-   # expand(path.join(DATA, "star", "{species}", 
-   #                  "{expt}", "{sample}_sorted_mmr.bam"),
-   #   zip, sample = SAMPLES, species = SPECIES, expt = EXPTS)[0],
-    
+   ## expand(path.join(DATA, "star", "{species}", 
+   ##                  "{expt}", "{sample}_sorted_mmr.bam"),
+   ##   zip, sample = SAMPLES, species = SPECIES, expt = EXPTS)[0],
+   
+   # expand(path.join(DATA, "homer", "dna", "{species}",
+   #                 "{expt}", "{geneset}", "homerResults.html"),
+   #                 zip, 
+   #                 geneset = genesets,
+   #                 species = len(genesets) * SPECIES, 
+   #                 expt = len(genesets) * EXPTS),
+   # 
+   # expand(path.join(DATA, "homer", "rna", "{species}",
+   #                 "{expt}", "{geneset}", "homerResults.html"),
+   #                 zip, 
+   #                 geneset = genesets_rna,
+   #                 species = len(genesets) * SPECIES, 
+   #                 expt = len(genesets) * EXPTS),
 include: "rules/qc.snake"    
 include: "rules/cutadapt.snake"
 include: "rules/primary_expression.snake"
@@ -124,3 +159,4 @@ include: "rules/make_bigwigs.snake"
 include: "rules/featurecounts.snake"
 include: "rules/mmr.snake"
 include: "rules/bowtie2.snake"
+include: "rules/homer.snake"

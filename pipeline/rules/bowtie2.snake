@@ -122,7 +122,7 @@ rule bt_masked:
           -x {params.idx} \
           --local \
           --threads {threads} \
-          -k 100 \
+          -k 250 \
           {params.settings} \
           {params.io} \
           | samtools view -bS \

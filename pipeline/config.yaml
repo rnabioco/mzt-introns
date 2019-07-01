@@ -12,8 +12,6 @@ SRC:
 DBASES: 
   "../dbases" 
 
-MMR: "/beevol/home/riemondy/src/mmr/mmr"
-
 GENOMES:
     drosophila: "/beevol/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
     xenopus:  "/beevol/home/riemondy/Projects/shared_dbases/genomes/xenopus/jgi_xenla9.2/XL9_2.fa"
@@ -22,6 +20,7 @@ GENOMES:
     xenopus_t: "/beevol/home/riemondy/Projects/shared_dbases/genomes/xenopus/jgi_xentrop9.1/xenTro9.fa"
     human: "/beevol/home/riemondy/Projects/shared_dbases/genomes/GRCh38.primary_assembly.genome.fa"
     mouse: "/beevol/home/riemondy/Projects/shared_dbases/genomes/GRCm38.primary_assembly.genome.fa"
+    chicken: "/beevol/home/riemondy/Projects/shared_dbases/genomes/chicken/gallus_gallus_5/Gallus_gallus.Gallus_gallus-5.0.dna.toplevel.fa"
 
 TRANSCRIPTS:
     drosophila: "/beevol/home/riemondy/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
@@ -31,15 +30,19 @@ TRANSCRIPTS:
     xenopus_t: "/beevol/home/riemondy/Projects/shared_dbases/annotation/xenopus/jgi_xentrop9.1/xenTro9.gtf"
     human: "/beevol/home/riemondy/Projects/shared_dbases/annotation/gencode.v26.primary_assembly.annotation.gtf"
     mouse: "/beevol/home/riemondy/Projects/shared_dbases/annotation/gencode.vM15.primary_assembly.annotation.gtf"
+    chicken: "/beevol/home/riemondy/Projects/shared_dbases/annotation/chicken/gallus_gallus_5/Gallus_gallus.Gallus_gallus-5.0.94.gtf"
 
 INTRONS:
     drosophila: "/beevol/home/riemondy/Projects/mzt-introns/dbases/drosophila/saf/fly_introns.saf"
     zebrafish: "/beevol/home/riemondy/Projects/mzt-introns/dbases/zebrafish/saf/introns.saf"
     xenopus_t: "/beevol/home/riemondy/Projects/mzt-introns/dbases/xenopus_t/saf/introns.saf"
+    chicken: "/beevol/home/riemondy/Projects/mzt-introns/dbases/chicken/saf/chicken_introns.saf"
+
 EXONS:
     drosophila: "/beevol/home/riemondy/Projects/mzt-introns/dbases/drosophila/saf/fly_exons.saf"
     zebrafish: "/beevol/home/riemondy/Projects/mzt-introns/dbases/zebrafish/saf/exons.saf"
     xenopus_t: "/beevol/home/riemondy/Projects/mzt-introns/dbases/xenopus_t/saf/exons.saf"
+    chicken: "/beevol/home/riemondy/Projects/mzt-introns/dbases/chicken/saf/chicken_exons.saf"
 
 CHROM_SIZES:
     drosophila: "/beevol/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
@@ -49,6 +52,8 @@ CHROM_SIZES:
     xenopus_t: "/beevol/home/riemondy/Projects/shared_dbases/genomes/xenopus/jgi_xentrop9.1/xenTro9.fa.fai"
     human: "/beevol/home/riemondy/Projects/shared_dbases/genomes/GRCh38.primary_assembly.genome.fa.fai"
     mouse: "/beevol/home/riemondy/Projects/shared_dbases/genomes/GRCm38.primary_assembly.genome.fa.fai"
+    chicken: "/beevol/home/riemondy/Projects/shared_dbases/genomes/chicken/gallus_gallus_5/Gallus_gallus.Gallus_gallus-5.0.dna.toplevel.fa.fai"
+
 
 GENOME_DIRS:
     drosophila: "/beevol/home/riemondy/Projects/shared_dbases/star/drosophila/BDGP6"
@@ -58,6 +63,7 @@ GENOME_DIRS:
     xenopus_t: "/beevol/home/riemondy/Projects/shared_dbases/star/xenopus/jgi_xentrop9.1"
     human: "/beevol/home/riemondy/Projects/shared_dbases/star/gencode_GRCh38"
     mouse: "/beevol/home/riemondy/Projects/shared_dbases/star/gencode_GRCm38"
+    chicken: "/beevol/home/riemondy/Projects/shared_dbases/star/chicken/gallus_gallus_5"
 
 SALMON_K:
     drosophila: 21
@@ -66,6 +72,7 @@ SALMON_K:
     seaurchin: 31
     xenopus_t: 31 
     human: 31
+    chicken: 31 
 
 # path to STAR SJ.out.tab file
 # Can be single file or wildcard expression matching multiple files
@@ -130,3 +137,26 @@ XUE:
     fq: 
         - "_1.fastq.gz"
         - "_2.fastq.gz"
+
+HWANG:
+    trim: " -q 10 -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGTAGATCTCGGTGGTCGCCGTATCATT  "
+    intron_count: " --minOverlap 5 -s 2 -p "
+    exon_count: " --fracOverlap 1 -s 2 -p "
+    map: " --libType 'A' --discardOrphansQuasi"
+    idx: " -k 31 "
+    stranded: "reverse"
+    bt_map: " --nofw "
+    fq: 
+        - "_1.fastq.gz"
+        - "_2.fastq.gz"
+
+HARRIS:
+    trim: " -q 10 -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC "
+    intron_count: " --minOverlap 5 -s 2 "
+    exon_count: " --fracOverlap 1 -s 2 "
+    map: " --fldMean 200 --fldSD 20 --libType 'SR' "
+    idx: " -k 31 "
+    stranded: "reverse"
+    bt_map: " --nofw "
+    fq: 
+        - ".fastq.gz"

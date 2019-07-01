@@ -27,6 +27,7 @@ module load samtools/1.5
 module load STAR/2.5.2a
 module load subread/1.6.2
 module load bowtie2/2.3.2
+module load homer/4.9
 
 # other programs (not in modules)
 # Salmon-0.8.2
@@ -41,4 +42,5 @@ snakemake --drmaa "$args" \
     --resources all_threads=150 \
     --latency-wait 50 \
     --rerun-incomplete  \
-    --configfile config.yaml  
+    --configfile config.yaml \
+    --until make_bigwigs
