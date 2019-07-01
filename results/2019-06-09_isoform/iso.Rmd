@@ -534,6 +534,53 @@ simple_annots <- select(annots,
 
 cds_changed_annots <- filter(simple_annots, 
                              !same_CDS)
+
+dir.create("output_files")
+cds_changed_annots <- set_xlsx_class(cds_changed_annots, "gene_name", "Text")
+
+README_txt <- c(
+  "The file Isoform_CDS_alterations.xlsx contains information about
+  genes with transcript usage changes during the MZT.",
+  "Transcript usage differences were identifed with DEXseq using transcript level estimates from salmon.",
+  "Genes with transcript usage differences were selected using a gene level p-value (< 0.05) for differential transcript usage (see DEXSeq::perGeneQValue).",
+  "Representative Maternal and Zygotic transcripts were selected for each gene with evidence of differential transcript usage.",
+  "Specifically, the most abundant transcriptin the Maternal stages was selected as the Maternal dominant isoform.",
+  "The dominant zygotic isoform was then selected as the most abundant transcript expressed in the zygotic stages that was not the previously assigned dominant maternal transcript.",
+  "For each gene I've included information about the dominant maternal and zygotic transcript on separate rows.",
+  "",
+  ""
+)
+  
+col_info <- c(
+  "Column: Description",
+  "gene_id: Flybase gene id",
+  "gene_name: Flybase gene name",
+  "per_gene_qval: Per gene adjusted p-value, used to screen for genes with transcript-level changes",
+  "transcript_id: flybase transcript id",
+  "transcript_type: One of Maternal or Zygotic (see above for definitions)",
+  "strand: Transcribed strand",
+  "per_tx_padj: Per transcript adjusted p-value",
+  "log2fold_zygotic_maternal: log2 fold change in transcript level between zygotic (>= 2-3hr samples) and maternal (< 2-3 hour) samples",
+  "protein_id: Peptide identifier for CDS of transcript",
+  "protein_seq: Aminoacid sequence for CDS",
+  "same_three_prime_utr: Boolean indicating if the Maternal and Zygotic transcripts have the same 3'UTR",
+  "same_CDS: Boolean indicating if the Maternal and Zygotic transcripts have the same CDS",
+  "same_five_prime_utr: Boolean indicating if the Maternal and Zygotic transcripts have the same 5'UTR",
+  "three_prime_utr_length: length of 3'UTR (nt)",
+  "CDS_length: length of CDS (nt)",
+  "five_prime_utr_length: length of 5'UTR (nt)"
+)
+
+README_txt <- c(README_txt, col_info)
+
+openxlsx::write.xlsx(list(README = README_txt,
+                          CDS_INFO = cds_changed_annots),
+                     file.path("output_files",
+                       paste0("Isoform_CDS_alterations_",
+                              Sys.Date(),
+                              ".xlsx")))
+
+write_lines(README_txt, "output_files/README.txt")
 ```
 
 To do:
