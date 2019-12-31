@@ -1,0 +1,592 @@
+---
+title: "Untitled"
+author: "Kent Riemondy RBI"
+date: "11/8/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r libs}
+source("../../R/globals.r")
+```
+
+```{r}
+
+r_dat <- read_tsv("tables/rissland_table.tsv.gz")
+e_dat <- read_tsv("tables/eichhorn_table.tsv.gz")
+
+dat <- inner_join(r_dat, e_dat, 
+                  by = c("CHROM", "POS", "STRAND", "REF", "ALT"))
+
+dat[is.na(dat)] <- 0
+```
+
+
+```{r mdata}
+mdata1 <- read_tsv(file.path(data_dir,
+                             "raw_data",
+                             "drosophila",
+                             "EICHHORN",
+                             "GSE83616_run_info_geo.txt"))
+mdata2 <- read_tsv(file.path(data_dir,
+                             "raw_data",
+                             "drosophila",
+                             "RISSLAND",
+                             "GSE98106_run_info_geo.txt"))
+
+#simplify mdata
+mdata1 <- dplyr::select(mdata1,
+                       Run_s, 
+                       developmental_stage_s,
+                       genotype_s,
+                       source_name_s,
+                       Assay_Type_s)
+
+#simplify mdata
+mdata2 <- dplyr::select(mdata2,
+                       Run_s, 
+                       developmental_stage_s,
+                       rip_antibody_s,
+                       source_name_s,
+                       strain_s)
+
+# select relevant libs
+mdata2 <- dplyr::filter(mdata2,
+                     source_name_s == "Embryo",
+                     strain_s %in% c("w1118", "eGFP-ME31B"),
+                     rip_antibody_s == "none") %>% 
+  dplyr::select(-rip_antibody_s)
+
+mdata1 <- dplyr::filter(mdata1,
+                     genotype_s == "wt",
+                     Assay_Type_s == "RNA-Seq") %>% 
+  dplyr::select(-Assay_Type_s) %>% 
+  dplyr::rename(strain_s = genotype_s)
+
+
+mdata <- list(mdata1, mdata2)
+names(mdata) <- c("EICHHORN", "RISSLAND")
+
+mdata <- bind_rows(mdata, .id = "study")
+#cleanup names
+mdata <- mdata %>% 
+  mutate(source_name_s = ifelse(source_name_s == "embryos", 
+                                "Embryo",
+                                source_name_s),
+         developmental_stage_s = str_replace(developmental_stage_s,
+                                             " h ",
+                                             " hr "))
+
+# cleanup colnames
+colnames(mdata) <- str_replace(colnames(mdata),
+                               "_s$",
+                               "")
+
+mdata
+
+
+adult_mdata <- tribble(
+  ~study, ~Run, ~developmental_stage, ~source_name, ~strain,
+  "GRAVELEY", "ENCFF302NZH", "adult", "head", "w1118"
+)
+
+mdata <- bind_rows(mdata, adult_mdata)
+```
+
+
+```{r}
+
+tdat <- pivot_longer(dat, -c(CHROM, POS, STRAND, REF, ALT))
+
+tdat <- separate(tdat, name, c("lib", "tmp", "allele"), sep = "_") %>% 
+  select(-c(REF, ALT, tmp)) %>% 
+  spread(allele, value)
+
+edit_dat <- tdat %>% 
+  mutate(edit_proportion = alt / (alt + ref),
+         edit_proportion = ifelse(is.nan(edit_proportion),
+                                  0,
+                                  edit_proportion),
+         start = POS - 1,
+         end = POS) %>% 
+  select(chrom = CHROM,
+         start, 
+         end, 
+         strand = STRAND,
+         lib,
+         alt,
+         ref,
+         edit_proportion)
+
+# remove snps
+snps <- read_tsv("editing_matrix/dm6_snps.txt", col_names = c("chrom", "start", "end", "ref", "alt"))
+
+edit_dat <- anti_join(edit_dat, snps, by = c("chrom", "start", "end"))
+
+edit_dat <- left_join(edit_dat, mdata, by  = c("lib" = "Run"))
+
+# get rid of other libs (riboprofiling)
+edit_dat <- edit_dat %>% filter(!is.na(study))
+
+sites_per_sample <- edit_dat %>% 
+  filter((alt + ref) >= 10) %>% 
+  filter(edit_proportion >= 0.05) %>% 
+  group_by(lib) %>% 
+  summarize(n = n()) %>% 
+  left_join(mdata, by = c("lib" = "Run"))
+
+sites_per_sample
+
+ggplot(sites_per_sample, aes(developmental_stage, n)) +
+  geom_col(aes(fill = strain)) +
+  labs(y = "number of sites") +
+  facet_wrap(~strain) +
+  theme(axis.text.x = element_text(angle =90))
+
+```
+
+```{r}
+edit_dat <- mutate(edit_dat, edit_id = str_c(chrom, ":", start, ":", strand))
+edit_freq_matrix <- select(edit_dat, edit_id, lib, edit_proportion) %>% 
+  spread(lib, edit_proportion) %>% 
+  column_to_rownames("edit_id") %>% 
+  as.matrix()
+
+w118_riss_mat <- edit_freq_matrix[, 
+                                  filter(mdata, study == "RISSLAND",
+                                         strain == "eGFP-ME31B") %>%
+                                    pull(Run)] 
+w118_riss_mat <- w118_riss_mat[rowSums(w118_riss_mat) > 0, ]
+
+high_var_edits <- order(apply(w118_riss_mat, 1, var), 
+                        decreasing = TRUE)[1:1000]
+
+high_var_edits <- rowSums(w118_riss_mat > 0 & w118_riss_mat < 1) > 2
+
+Heatmap(w118_riss_mat[high_var_edits, ], 
+        show_row_names = FALSE, 
+        show_row_dend = FALSE)
+```
+
+
+```{r}
+library(UpSetR)
+
+plot_order <- c(
+  "Stage 11 oocyte",
+    "Stage 12 oocyte",
+    "Stage 13 oocyte",
+    "Stage 14 oocyte",
+  "Activated egg",
+  "0-1 hr embryo",
+    "2-3 hr embryo",
+    "3-4 hr embryo",
+    "5-6 hr embryo"
+    )
+
+sites_per_lib <- edit_dat %>% 
+  filter(strain == "wt") %>% 
+  filter((alt + ref) >= 10) %>% 
+  filter(edit_proportion >= 0.05) %>% 
+  split(., .$developmental_stage) %>% 
+  map(., ~pull(.x, edit_id)) 
+  
+
+upset(fromList(sites_per_lib[plot_order]), 
+      sets = rev(plot_order),
+      keep.order = TRUE,
+      nsets = length(sites_per_lib))
+
+
+
+plot_order <- c(
+  "0-1 hr embryo",
+  "1-2 hr embryo",
+    "2-3 hr embryo",
+    "3-4 hr embryo",
+    "4-5 hr embryo"
+    )
+
+sites_per_lib <- edit_dat %>% 
+  filter(study == "RISSLAND") %>% 
+  filter((alt + ref) >= 10) %>% 
+  filter(edit_proportion >= 0.05) %>% 
+  mutate(sample_id = str_c(developmental_stage, ":", strain)) %>% 
+  split(., .$sample_id) %>% 
+  map(., ~pull(.x, edit_id)) 
+  
+
+upset(fromList(sites_per_lib), 
+   #   sets = rev(plot_order),
+      keep.order = TRUE,
+      nsets = length(sites_per_lib))
+
+
+plot_order <- c(
+  "0-1 hr embryo",
+  "1-2 hr embryo",
+    "2-3 hr embryo",
+    "3-4 hr embryo",
+    "4-5 hr embryo"
+    )
+
+sites_per_lib <- edit_dat %>% 
+  filter(study == "RISSLAND", strain == "w1118") %>% 
+  filter((alt + ref) >= 10) %>% 
+  filter(edit_proportion >= 0.05) %>% 
+  split(., .$developmental_stage) %>% 
+  map(., ~pull(.x, edit_id)) 
+  
+
+upset(fromList(sites_per_lib), 
+      #sets = rev(plot_order),
+      #keep.order = TRUE,
+      nintersects = 100,
+      order.by = "freq",
+      nsets = length(sites_per_lib))
+```
+
+```{r}
+edit_site_summary <- edit_dat %>%
+  group_by(chrom, start, end, strand) %>% 
+  dplyr::summarize(edit_var = var(edit_proportion), 
+                   edit_max = max(edit_proportion), 
+                   edit_min = min(edit_proportion),
+                   edit_cov_max = max(alt + ref)) 
+
+filtered_edits <- ungroup(edit_site_summary) %>% 
+  filter(edit_max > 0.05 & edit_min < 0.95) %>% 
+  filter(edit_cov_max >= 20)
+  
+
+edit_dat <- semi_join(edit_dat, 
+                      filtered_edits, 
+                      by = c("chrom", "start", "end", "strand"))
+
+plt_dat <- edit_dat %>% 
+  group_by(lib, strain, developmental_stage) %>% 
+  summarize(alt = sum(alt), ref = sum(ref)) %>%
+  mutate(editing_index = alt / (alt + ref))
+
+ggplot(edit_dat, aes(developmental_stage, edit_proportion)) +
+  geom_boxplot(aes(fill = strain))
+
+
+p <- ggplot(plt_dat, aes(developmental_stage, editing_index)) +
+  geom_col(aes(fill = strain), position = "dodge") +
+  scale_fill_brewer(palette = "Set1") +
+  labs(x = "") +
+  theme(axis.text.x = element_text(angle = 90))
+p
+save_plot("editing_index.pdf", 
+          p, 
+          base_asp = 1.5)
+```
+
+
+```{r}
+a <- readxl::read_excel("editing_matrix/pgen.1006191.s010.xlsx", skip = 4)
+colnames(a)[1:2] <- c("site", "type")
+
+coords <- a %>% select(site) %>% 
+  separate(site, c("chrom", "pos"), sep = "-", remove = FALSE) %>% 
+  mutate(chrom = str_c("chr", chrom),
+         pos = as.numeric(pos),
+         start = pos - 1,
+         end = pos) %>% 
+  select(chrom, start, end, site) 
+
+write_tsv(coords, "edit_annotations_s10.tsv", col_names = FALSE)
+
+new_coords <- read_tsv("editing_matrix/out_annots.txt", 
+                       col_names = c("chrom", "start", "end", "site")) %>% 
+ mutate(chrom = str_remove(chrom, "^chr"))
+
+known_edits <- left_join(new_coords, a, by = "site")
+
+known_edits_data <- inner_join(edit_dat, known_edits, 
+                               by = c("chrom", "start", "end"))
+
+edit_dat <- left_join(edit_dat, 
+                      known_edits, 
+                      by = c("chrom", "start", "end"))
+```
+
+```{r}
+plt_dat <- known_edits_data %>% 
+  group_by(lib, strain, developmental_stage) %>% 
+  summarize(alt = sum(alt), ref = sum(ref)) %>%
+  mutate(editing_index = alt / (alt + ref))
+
+
+p <- ggplot(plt_dat, aes(developmental_stage, editing_index)) +
+  geom_col(aes(fill = strain), position = "dodge") +
+  scale_fill_brewer(palette = "Set1") +
+  labs(x = "") +
+  theme(axis.text.x = element_text(angle = 90))
+p
+```
+
+
+
+```{r}
+filter(edit_dat, 
+       `Gene Name` %in% c("Adar")) %>% 
+  ggplot(aes(developmental_stage, edit_proportion)) +
+  geom_point(aes(color = strain)) +
+  facet_grid(site ~`Gene Name`, scales = "free")
+
+# find sites that vary
+edit_site_summary <- filter(known_edits_data, 
+       developmental_stage != "adult") %>% 
+  group_by(chrom, start, end, strand, `Gene Name`) %>% 
+  dplyr::summarize(edit_var = var(edit_proportion), 
+                   edit_max = max(edit_proportion), 
+                   edit_min = min(edit_proportion),
+                   delta = developmental_stage[5] - developmental_stage[1])
+
+```
+
+
+
+```{r}
+
+a <- readxl::read_excel("refs/pgen.1006563.s013.xlsx", skip = 1) %>% 
+  mutate(chrom = str_remove(Chr, "^chr"),
+         start = Position - 1,
+         end = Position) %>% 
+  select(-Position, -Chr)
+
+li_known_sites <- inner_join(a, edit_dat, by = c("chrom", "start", "end"))
+
+```
+
+```{r}
+
+for_liftover <- read_csv("refs/2010-09-11375C-Table_S29_revised_final.csv") %>%
+  mutate(end = Position,
+         start = end - 1,
+         Arm = str_c("chr", Arm), 
+         old_id = str_c(Arm, ":", start, "-", end)) %>% 
+  select(chrom = Arm, start, end, old_id)
+
+write_tsv(for_liftover, "refs/graveley_edits_dm3.txt", col_names = FALSE)
+```
+
+
+```{r}
+for_liftover <- read_csv("refs/2010-09-11375C-Table_S29_revised_final.csv") %>%
+  mutate(end = Position,
+         start = end - 1,
+         chrom = str_c("chr", Arm), 
+         old_id = str_c(Arm, ":", start, "-", end)) 
+
+graveley_edit_sites <- read_tsv("refs/graveley_edits_dm6.txt", 
+                           col_names = c("chrom", "start", "end", "old_id")) %>% 
+  separate(old_id, c("old_chrom", "old_start", "old_end"), convert = TRUE) 
+  
+graveley_edit_sites <- left_join(graveley_edit_sites, for_liftover, 
+          by = c("old_chrom" = "chrom", 
+                 "old_start" = "start", 
+                 "old_end" = "end")) %>% 
+  mutate(chrom = str_remove(chrom, "^chr"))
+
+```
+
+```{r}
+gedits <- read_tsv("editing_matrix/graveley_table.tsv.gz")
+
+gedits <- mutate(gedits, 
+                 start = POS - 1) %>% 
+  dplyr::select(chrom = CHROM,
+                start, end = POS, everything())
+
+g_prev_edits <- gedits %>% 
+  semi_join(graveley_edit_sites, by = c("chrom", "start", "end"))
+
+```
+
+
+```{r}
+adult_mdata <- tribble(
+  ~id, ~sample, ~time, ~time_unit, ~stage,
+   "ENCFF302NZH", "head_adult", "adult", "0", "adult"
+)
+gmdata <- read_tsv("editing_matrix/graveley_mdata.txt", 
+                   col_names = c("id",
+                                 "sample",
+                                 "time",
+                                 "time_unit",
+                                 "stage")) %>% 
+  bind_rows(., adult_mdata)
+
+gmdata <- gmdata %>% 
+  mutate(ref = str_c(id, "_Aligned.sortedByCoord.out.bam_ref"),
+         alt = str_c(id, "_Aligned.sortedByCoord.out.bam_alt")) %>% 
+  gather(state, file_id, -id, -sample, -time, -time_unit, -stage)
+
+gmdata <- filter(gmdata, file_id %in% colnames(gedits))
+
+# add time ordering variable
+
+gmdata <- mutate(gmdata, 
+                 time_val = as.numeric(str_split(time,
+                                                 "-", 
+                                                 simplify = T)[, 1])) %>% 
+  arrange(time_val)
+```
+
+```{r}
+g_prev_edits <- g_prev_edits %>% 
+  mutate(edit_id = str_c(chrom, ":", start, ":", STRAND)) %>% 
+  dplyr::select(edit_id, 
+                everything(), 
+                -chrom, -start, -end, -STRAND, -REF, -ALT)
+
+g_edit_freq <- g_prev_edits %>% 
+  gather(lib, counts, -edit_id) %>% 
+  separate(lib, c("id", "tmp", "allele"), sep = "_") %>% 
+  dplyr::select(-tmp) %>% 
+  spread(allele, counts) %>% 
+  mutate(edit_freq = alt / (alt + ref),
+         edit_freq = ifelse(is.na(edit_freq),
+                            0,
+                            edit_freq)) %>% 
+  dplyr::select(-alt, -ref) %>% 
+  spread(id, edit_freq) %>% 
+  tibble::column_to_rownames("edit_id") %>% 
+  .[rowSums(.) > 0, ] %>% 
+  .[, unique(gmdata$id)] %>% 
+  as.matrix()
+```
+
+
+```{r}
+tpts <- unique(gmdata$time)
+tpt_cols <- viridis::viridis(length(tpts))
+names(tpt_cols) <- tpts
+
+annots <- as.data.frame(unique(gmdata[c("id", "time")]))
+rownames(annots) <- annots$id
+annots <- annots[colnames(g_edit_freq), -1, drop = FALSE]
+
+hmap_annots <- HeatmapAnnotation(time = annots$time,
+                                 col = list(
+     time = tpt_cols))
+
+
+pdf("graveley_editing.pdf")
+Heatmap(g_edit_freq, 
+        show_row_dend = FALSE,
+        show_row_names = FALSE, 
+        cluster_columns = FALSE,
+        top_annotation = hmap_annots)
+dev.off()
+
+```
+
+```{r}
+g_all_edits <- gedits %>% 
+  anti_join(snps, by = c("chrom", "start", "end")) %>% 
+  mutate(edit_id = str_c(chrom, ":", start, ":", STRAND)) %>% 
+  dplyr::select(edit_id, 
+                everything(), 
+                -chrom, -start, -end, -STRAND, -REF, -ALT) 
+
+g_all_edits_mat <- g_all_edits %>% 
+  column_to_rownames("edit_id") %>% 
+  as.matrix()
+
+ref_cols <- str_which(colnames(g_all_edits_mat), "_ref$")
+alt_cols <- str_which(colnames(g_all_edits_mat), "_alt$")
+
+length(ref_cols) == length(alt_cols)
+
+g_edit_depth <- g_all_edits_mat[, ref_cols] + g_all_edits_mat[, alt_cols]
+g_edit_freq <- g_all_edits_mat[, alt_cols] / g_edit_depth
+g_edit_freq[is.na(g_edit_freq)] <- 0
+
+colnames(g_edit_freq) <- str_split(colnames(g_edit_freq), 
+                                   "_", 
+                                   simplify = T)[, 1]
+
+colnames(g_edit_depth) <- str_split(colnames(g_edit_depth), 
+                                   "_", 
+                                   simplify = T)[, 1]
+
+gsite_pass_freq <- rownames(g_edit_freq)[rowSums(g_edit_freq > 0.05 &
+                                                   g_edit_freq < 0.95) > 3]
+
+gsite_pass_depth <- rownames(g_edit_depth)[rowSums(g_edit_depth > 20) > 3]
+
+good_sites <- intersect(gsite_pass_freq, gsite_pass_freq)
+
+g_filt_edit_freq <- g_edit_freq[good_sites, ]
+
+# take top n based on variance
+n <- 10000
+svar <- apply(g_filt_edit_freq, 1, var)
+high_var <- order(svar, decreasing = TRUE)[1:n]
+g_var <- g_filt_edit_freq[high_var, ]
+
+# delt edit freq cutoff
+high_low <- apply(g_filt_edit_freq, 1, function(x){
+  (max(x) - min(x)) > 0.75
+})
+
+g_hl <- g_filt_edit_freq[high_var, ]
+Heatmap(g_var, 
+        show_row_dend = FALSE,
+        show_row_names = FALSE, 
+        cluster_columns = FALSE)
+```
+
+```{r}
+
+gmdata <- filter(gmdata, stage != "adult")
+g_filt_edits_mat <- g_all_edits_mat[good_sites, gmdata$file_id]
+
+# remove adult sample
+gmdata  <- mutate(gmdata , 
+                  mzt = ifelse(time_val < 6, "maternal", "zygotic"))
+
+n_samples <- ncol(g_filt_edits_mat) / 2
+pdata <- data.frame(samples = colnames(g_filt_edits_mat),
+                    sample_id = as.factor(rep(1:n_samples, each = 2)),
+                    type = gmdata$mzt,
+                    allele = c(rep(c("A", "G"), 
+                                   n_samples)), 
+                    row.names = 1)
+
+pdata
+
+
+design <- model.matrix(~0 + sample_id + type:allele, data = pdata)
+design[1:5, ]
+
+design <- design[,!grepl("alleleA", colnames(design))] # get to full rank
+
+design[1:5, ]
+
+library(edgeR)
+
+dge <- DGEList(g_filt_edits_mat)
+dge <- calcNormFactors(dge)
+dge <- estimateDisp(dge, design)
+fit <- glmFit(dge,design)
+
+colnames(design)
+
+contrast_arg <- c(rep(0, 32), 1, -1)
+ 
+con <- glmLRT(fit, contrast = contrast_arg)
+tt <- topTags(con)
+tt <- as.data.frame(tt)
+head(tt)
+```
+
+

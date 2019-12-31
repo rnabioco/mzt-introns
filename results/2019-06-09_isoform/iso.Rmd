@@ -12,6 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(DEXSeq)
 library(tidyverse)
+library(kentr)
 source("../../R/globals.r")
 
 mdata <- read_tsv(file.path(data_dir,
@@ -157,7 +158,7 @@ tpm_cut_off <- 0.50
 intron_tpm_cut_off <- 0.10
 
 mean_exonic_tpms <- mean_exonic_tpms %>% 
-  select(gene_id:fasta_type, -fasta_type) %>% 
+  dplyr::select(gene_id:fasta_type, -fasta_type) %>% 
   gather(stage, tpm, -gene_id) %>% 
   mutate(expressed = tpm > tpm_cut_off) %>% 
   group_by(gene_id) %>% 
@@ -168,7 +169,7 @@ mean_exonic_tpms <- mean_exonic_tpms %>%
   left_join(mean_exonic_tpms, ., by = "gene_id")
 
 mean_intronic_tpms <- mean_intronic_tpms %>% 
-  select(gene_id:fasta_type, -fasta_type) %>% 
+  dplyr::select(gene_id:fasta_type, -fasta_type) %>% 
   gather(stage, tpm, -gene_id) %>% 
   mutate(expressed = tpm > intron_tpm_cut_off) %>% 
   group_by(gene_id) %>% 
@@ -459,11 +460,29 @@ save_plot("transcript_features.pdf", plt, nrow = 2, ncol = 3,
           base_asp = 1)
 ```
 
+Paired analysis
+
+```{r}
+
+annots <- list(zygotic = z,
+                     maternal = m)
+tx_feats <- map(annots,
+  ~calc_other_features(gtf, .x)) 
+
+
+### length
+plt_dat <- bind_rows(tx_feats, .id = "tx_class")
+plt_dat %>% 
+  spread(tx_class, n_exons)
+
+
+
+```
 
 # CDS analysis
 1) Rank genes by q-val
 2) have two rows per gene for maternal and zyg
-3) 
+
 ```{r}
 z_g <- zyg_tx[zyg_tx$gene_id %in% to_keep, ]
 m_g <- mat_tx[mat_tx$gene_id %in% to_keep, ]
@@ -496,8 +515,6 @@ cds <- left_join(cds,
 
 annots <- left_join(annots, cds,
                     by = c("featureID" = "transcript_id"))
-
-#932.46
 
 tx_gtf <- filter(gtf, transcript_id %in% annots$featureID)
          
@@ -538,6 +555,18 @@ cds_changed_annots <- filter(simple_annots,
 dir.create("output_files")
 cds_changed_annots <- set_xlsx_class(cds_changed_annots, "gene_name", "Text")
 
+write_tsv(annots, file.path("output_files",
+                       paste0("all_annotations",
+                              Sys.Date(),
+                              ".tsv")))
+
+all_genes <- left_join(dxr.g, 
+                       gene2symbol, 
+                       by = c("gene" = "gene_id"))
+
+
+all_genes <- set_xlsx_class(all_genes, "gene_name", "Text")
+
 README_txt <- c(
   "The file Isoform_CDS_alterations.xlsx contains information about
   genes with transcript usage changes during the MZT.",
@@ -574,7 +603,8 @@ col_info <- c(
 README_txt <- c(README_txt, col_info)
 
 openxlsx::write.xlsx(list(README = README_txt,
-                          CDS_INFO = cds_changed_annots),
+                          CDS_INFO = cds_changed_annots,
+                          ALL_GENES = all_genes),
                      file.path("output_files",
                        paste0("Isoform_CDS_alterations_",
                               Sys.Date(),
@@ -583,16 +613,468 @@ openxlsx::write.xlsx(list(README = README_txt,
 write_lines(README_txt, "output_files/README.txt")
 ```
 
-To do:
-Mark if 5'UTR is different in z versus m
-Mark if 3'UTR is different in z versus m
-Mark if CDS is different in z versus m
+## Codon optimality
 
 
+```{r}
+sup_url <- "https://www.cell.com/cms/10.1016/j.celrep.2018.07.039/attachment/d3cd58a0-6a77-48f9-bca8-9f31bf42295a/mmc3.xlsx"
+
+download.file(sup_url, "Burow_et_al_table_s2.xlsx")
+
+table_s2 <- readxl::read_excel("Burow_et_al_table_s2.xlsx")
+
+# copied from figure 1c 
+optimal_codons <- c(
+  "AAG",
+  "CGT",
+  "GCT",
+  "GCC",
+  "GTC",
+  "CGC",
+  "ACC",
+  "TAC",
+  "GGT",
+  "CCC",
+  "GGA",
+  "ATC",
+  "GGC",
+  "GTG",
+  "TTC",
+  "GTT",
+  "CCT",
+  "TCC",
+  "AAC",
+  "TCT",
+  "TTA",
+  "GAG")
+
+changed_cds <- filter(annots, !same_CDS)
+
+shared_annots <- inner_join(changed_cds,table_s2, by = c("featureID" = "FBtr")) 
+
+calc_percent_optimal <- function(cds_seq, 
+                                 optimal_codon_seqs) {
+   stringr::str_match_all(cds_seq, ".{3}") %>%
+    purrr::map_dfr(~tibble(n_optimal = sum(.x %in% optimal_codon_seqs),
+                           n_codons = length(.x),
+                           proportion_optimal = n_optimal / n_codons))
+}
+
+shared_annots <- mutate(shared_annots, 
+                        optimality = calc_percent_optimal(seq,
+                                                     optimal_codons)$proportion_optimal)
+
+changed_cds <- mutate(changed_cds, optimality = calc_percent_optimal(seq,
+                                                 optimal_codons)$proportion_optimal)
+
+changed_cds <- group_by(changed_cds, gene_id) %>% 
+  mutate(delta = log2(nth(optimality, 1) / nth(optimality, 2)))
+
+library(ggbeeswarm)
+
+p <- ggplot(changed_cds, aes(tx_class, optimality)) + 
+  geom_quasirandom() +
+  geom_boxplot(alpha = 0.5, coef = 100) +
+  labs(x = "",
+       y = "Percent Optimality")
+
+p_delta <- ggplot(changed_cds, aes("Zygotic/Maternal", delta)) + 
+  geom_quasirandom() +
+  geom_boxplot(alpha = 0.5, coef = 100) +
+  labs(x = "",
+       y = "Log2 ratio Percent Optimality")
+
+p <- plot_grid(p, p_delta, nrow = 1, ncol = 2)
+p
+save_plot("output_files/codon_optimality.pdf", p, nrow = 1, ncol = 2)
+
+ggplot(shared_annots, aes(tx_class, `Embryo half-life`)) +
+  geom_quasirandom() +
+  scale_y_log10()
+```
 
 
+Find codon changes between sequences not found in maternal
+
+```{r, eval = FALSE}
+changed_cds <- filter(annots,!same_CDS)
+z_txs <- filter(changed_cds, tx_class == "zygotic")
+z_txs <- filter(gtf, type == "CDS",
+                transcript_id %in% z_txs$featureID) %>%
+  group_by(strand, gene_id, phase) 
+
+m_txs <- filter(changed_cds, tx_class == "maternal")
+m_txs <-filter(gtf, type == "CDS", 
+         transcript_id %in% m_txs$featureID) %>%
+  group_by(strand, gene_id, phase)
+
+# get unique CDS sequence
+new_seqs <- bed_subtract(z_txs, m_txs) %>%
+  get_sequences(fasta_path = fa_fn)
+
+seq_overlap <- bed_intersect(z_txs, m_txs, 
+                             suffix = c("_z", "_m")) %>% 
+  mutate(start_m = pmax(start_z, start_m),
+         end_m = pmin(end_z, end_m)) %>% 
+  rowwise() %>% 
+  mutate(in_frame = start_m %in% seq(start_z, 
+                                     end_z, by = 3)) %>% 
+  ungroup()
+
+seq_overlap <- split(seq_overlap, 1:nrow(seq_overlap))
+```
+
+```{r}
+
+library(Biostrings)
+
+cds_diffs <- function(cds1, cds2) {
+  
+  dna1 <- DNAString(cds1)
+  dna2 <- DNAString(cds2)
+  
+  amino1 <- AAString(translate(dna1))
+  amino2 <- AAString(translate(dna2))
+  
+  codons1 <- codons(dna1)
+  codons2 <- codons(dna2)
+  
+  aa_align <- pairwiseAlignment(amino1,
+                                amino2, 
+                                type = "local", 
+                                gapOpening = 0, 
+                                gapExtension = Inf)
+  
+  dna_align <- pairwiseAlignment(dna1,
+                                dna2, 
+                                type = "local", 
+                                gapOpening = 0, 
+                                gapExtension = Inf)
+    
+  new_aa <- as.character(amino1[-(start(pattern(aa_align)):end(pattern(aa_align)))])
+  new_codons <- as.character(codons1[-(start(pattern(aa_align)):end(pattern(aa_align)))])
+  
+  tibble(new_aa = new_aa,
+         new_codons = list(new_codons))
+}
+
+seq_diffs_zygotic <- changed_cds %>% 
+  select(tx_class, gene_id, seq) %>% 
+  spread(tx_class, seq) %>% 
+  mutate(out = map2(zygotic, maternal, cds_diffs)) %>% 
+  unnest()
+
+seq_diffs_maternal <- changed_cds %>% 
+  select(tx_class, gene_id, seq) %>% 
+  spread(tx_class, seq) %>% 
+  mutate(out = map2(maternal, zygotic, cds_diffs)) %>% 
+  unnest()
+
+optimal_zygo <- calc_percent_optimal(map_chr(seq_diffs_zygotic$new_codons,
+                             paste0, collapse = ""), 
+                     optimal_codon_seqs = optimal_codons)
+
+optimal_mat <- calc_percent_optimal(map_chr(seq_diffs_maternal$new_codons,
+                             paste0, collapse = ""), 
+                     optimal_codon_seqs = optimal_codons)
+
+optimal_seq_calcs <- bind_rows(list(`Zygotic isoforms` = optimal_zygo,
+                                     `Maternal isoforms` = optimal_mat),
+                               .id = "class") %>% 
+  na.omit()
 
 
+library(ggbeeswarm)
+
+p <- ggplot(optimal_seq_calcs, aes(class, proportion_optimal)) + 
+  geom_quasirandom() +
+  geom_boxplot(alpha = 0.5, coef = 100) +
+  labs(x = "",
+       y = "Percent Optimality")
+
+p
+
+save_plot("output_files/codon_optimality_new_sequence.pdf", p, base_asp = 1.0)
+```
+
+```{r}
+seq_diffs <- bind_rows(list(`Zygotic isoforms` = seq_diffs_zygotic ,
+                                     `Maternal isoforms` = seq_diffs_maternal),
+                               .id = "tx_class") 
+
+aa_stats <- split(seq_diffs, seq_diffs$tx_class) %>% 
+  map_dfr(~str_split(.x$new_aa, "") %>%
+            unlist() %>% tibble(aa = .) %>% 
+            filter(aa != "*") %>% 
+            group_by(aa) %>% 
+            summarize(n_aa = n()) %>% 
+            ungroup() %>%
+            mutate(proportion = n_aa / sum(n_aa)), 
+          .id = "tx_class")
+
+p <- ggplot(aa_stats, 
+       aes(reorder(aa, -proportion), proportion)) +
+  geom_col(aes(fill =tx_class), 
+           position = "dodge") +
+  scale_fill_brewer(name = "",
+                    palette = "Set1") +
+  labs(x = "") +
+  theme(
+    legend.position = "top"
+  )
+
+p
+save_plot("output_files/aa_usage_new_sequence.pdf", p, base_asp = 1.5)
+
+```
+
+```{r}
+
+optimal_codons
+
+codon_stats <- split(seq_diffs, seq_diffs$tx_class) %>% 
+  map_dfr(~unlist(.x$new_codons) %>%
+            tibble(codons = .) %>% 
+            group_by(codons) %>% 
+            summarize(n_codons = n()) %>% 
+            ungroup() %>%
+            mutate(proportion = n_codons / sum(n_codons)), 
+          .id = "tx_class")
+
+codon_stats <- mutate(codon_stats,
+                      aa = GENETIC_CODE[codons],
+                      codon_str = paste0("(", aa, ") ", codons ),
+                      optimal = ifelse(codons %in% optimal_codons,
+                                       "Optimal",
+                                       "Not Optimal"),
+                      optimal = factor(optimal, levels = c("Optimal",
+                                                           "Not Optimal")))
+
+p <- ggplot(codon_stats, 
+       aes(reorder(codon_str, -proportion), proportion)) +
+  geom_col(aes(fill =tx_class), 
+           position = "dodge") +
+  facet_grid(~optimal, drop = TRUE, scales = "free_x", space = "free_x") + 
+  scale_fill_brewer(name = "",
+                    palette = "Set1") +
+  labs(x = "") +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5),
+    legend.position = "top"
+  )
+
+p
+save_plot("output_files/codon_usage_new_sequence.pdf", p, base_asp = 2.5)
+
+
+```
+
+
+```{r mass_spec}
+peps <- read.table("~/Downloads/DeJung.2018.2.9.peptides_timecourse.txt.gz", 
+                   sep = " ",
+                   stringsAsFactors = FALSE) 
+
+peps <- select(peps, Sequence, 
+                Leading.razor.protein, 
+                Intensity.00h_1:Intensity.06h_4) %>% 
+   gather(intensity, value, -Sequence, -Leading.razor.protein) %>% 
+   mutate(intensity = str_remove(intensity, fixed("Intensity."))) %>%
+   separate(intensity, c("timepoint", "rep"), sep = "_") %>% 
+   group_by(Sequence, Leading.razor.protein, timepoint) %>% 
+   summarize(intensity = mean(value)) %>%
+   spread(timepoint, intensity) %>%
+   ungroup() 
+ 
+peps$total_expr <- rowSums(peps[, 3:9])
+
+peps <- filter(peps, total_expr > 0)
+
+a <- colnames(as.matrix(peps[, 3:9]))
+peps$max_timepoint <- apply(as.matrix(peps[, 3:9]), 
+                            MARGIN = 1, 
+                            function(x) a[which(x == max(x))])
+
+matched_peps <- map(split(seq_diffs_zygotic, 1:nrow(seq_diffs_zygotic)), 
+    ~peps[str_which(.x$new_aa, peps$Sequence), 
+          "Leading.razor.protein",
+          drop = TRUE] %>% 
+      unique())
+
+# matched_peps <- map(split(seq_diffs, 1:nrow(seq_diffs))[1], 
+#     ~peps[str_which(.x$new_aa, peps$Sequence), 
+#           ])
+
+
+names(matched_peps) <- seq_diffs_zygotic$gene_id
+
+summary_matched_peps <- matched_peps %>%
+  map_dfr(~tibble(pep_tx = list(if(length(.x) == 0) NA else .x)),  
+          .id = "gene_id") %>% 
+  unnest()
+
+summary_matched_peps <- left_join(summary_matched_peps, gene2symbol)
+
+additional_annots <- left_join(annots,
+                               summary_matched_peps, by = c("gene_id", "gene_name"))
+
+write_tsv(additional_annots, "isoform_summaries.tsv.gz")
+```
+
+
+## Tissue specificity
+
+```{r}
+
+tissue_expr <- read_tsv("gene_rpkm_report_fb_2017_05.tsv.gz", skip = 5)
+
+tissue_expr <- filter(tissue_expr, Parent_library_name == "modENCODE_mRNA-Seq_tissues")
+
+tissue_expr$RNASource_name <- str_remove(tissue_expr$RNASource_name, "mE_mRNA_")
+```
+## Motifs
+
+### CDS motifs
+
+```{r}
+delta_cds <- filter(annots, !same_CDS)
+
+fa_dir <- "fasta"
+dir.create(fa_dir, showWarnings = FALSE)
+filter(delta_cds, 
+       tx_class == "zygotic") %>% 
+  write_fasta(., 
+              file.path(fa_dir, "zygotic_cds_nt.fasta"), 
+              header = "featureID", seq_col = "seq")
+
+filter(delta_cds, 
+       tx_class == "maternal") %>% 
+  write_fasta(., 
+              file.path(fa_dir, "maternal_cds_nt.fasta"), 
+              header = "featureID", seq_col = "seq")
+
+```
+
+### Transcript level differences (kmer)
+
+```{r}
+kmer_enrichment <- function(gtf,
+                            feature = "exon",
+                            type = "transcript_id",
+                            group_1,
+                            group_2,
+                            fasta_fn,
+                            k = 7){
+  
+  filtered_gtf <- filter(gtf, !!sym(type) %in% union(group_1, group_2))
+         
+  tx_seqs <- txcompare::gtf_to_seq(filtered_gtf, 
+                      fasta_path = fasta_fn, 
+                      type_field = feature)
+  
+  kmers_all <- mutate(tx_seqs, 
+                      kmers = get_kmers(seq, 
+                                        n = k, 
+                                        both_strands = FALSE)) %>% 
+                select(!!sym(type), kmers) %>% 
+  unnest() %>% 
+  ungroup()
+
+  bg_count <- kmers_all %>% 
+      filter(!!sym(type) %in% group_2) %>% 
+      mutate(success = ifelse(counts >= 1, 1L, 0L)) %>% 
+      group_by(kmer) %>% 
+      summarize(counts = sum(success))
+  
+  test_count <- kmers_all %>% 
+      filter(!!sym(type) %in% group_1) %>% 
+      mutate(success = ifelse(counts >= 1, 1L, 0L)) %>% 
+      group_by(kmer) %>% 
+      summarize(counts = sum(success))
+  
+  kmers_total <- left_join(test_count, 
+                           bg_count,
+                           by = "kmer",
+                           suffix = c("_test", "_bg"))
+  
+  kmers_total <- mutate(kmers_total, 
+                        n_seq_test = length(unique(group_1)),
+                        n_seq_bg = length(unique(group_2))) %>% 
+    na.omit()
+  
+  out <- kmers_total %>% 
+    na.omit(.) %>%
+    rowwise() %>% 
+    do(broom::tidy(binom.test(.$counts_test, .$n_seq_test, 
+                       p = .$counts_bg / .$n_seq_bg,
+            alternative = "greater"))) 
+  
+  res <- bind_cols(kmers_total, out) %>% 
+    mutate(padj = p.adjust(p.value),
+           prop.test = counts_test / n_seq_test,
+           prop.bg = counts_bg / n_seq_bg,
+           enrichment = log2(prop.test / prop.bg),
+           log10pval = -log10(padj)) %>% 
+    arrange(padj) %>% 
+    mutate(rank = row_number(),
+           enriched = ifelse(rank <= 10, T, F)) %>% 
+    arrange(padj)
+  
+  res
+  
+}
+      
+```
+
+```{r}
+delta_any <- filter(annots, !same_CDS | !same_three_prime_utr | !same_five_prime_utr)
+
+z_txs <- filter(delta_any, tx_class == "zygotic") %>% pull(featureID)
+m_txs <- filter(delta_any, tx_class == "maternal") %>% pull(featureID)
+
+a <- kmer_enrichment(gtf = gtf, 
+                     feature = "exon",
+                     type = "transcript_id",
+                     group_1 = z_txs, 
+                     group_2 = m_txs, 
+                     fasta_fn = fa_fn, 
+                     k = 6)
+
+
+delta_any <- filter(annots, !same_three_prime_utr)
+
+z_txs <- filter(delta_any, tx_class == "zygotic") %>% pull(featureID)
+m_txs <- filter(delta_any, tx_class == "maternal") %>% pull(featureID)
+
+a <- kmer_enrichment(gtf = gtf, 
+                     feature = "three_prime_utr",
+                     type = "transcript_id",
+                     group_1 = z_txs, 
+                     group_2 = m_txs, 
+                     fasta_fn = fa_fn, 
+                     k = 6)
+
+
+filtered_gtf <- filter(gtf, transcript_id %in% z_txs)
+         
+z_tx_seqs <- txcompare::gtf_to_seq(filtered_gtf, 
+                      fasta_path = fa_fn, 
+                      type_field = "CDS")
+
+filtered_gtf <- filter(gtf, transcript_id %in% m_txs)
+         
+m_tx_seqs <- txcompare::gtf_to_seq(filtered_gtf, 
+                      fasta_path = fa_fn, 
+                      type_field = "CDS")
+
+library(transite)
+foreground.kmers <- generateKmers(z_tx_seqs$seq, 6)
+background.kmers <- generateKmers(m_tx_seqs$seq, 6)
+
+
+kmer.enrichment.values <- computeKmerEnrichment(foreground.kmers,
+  background.kmers)
+```
 
 ```{r}
 smaug_file <- ("supplement_2_chen_gb_2014.xlsx")

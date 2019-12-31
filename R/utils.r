@@ -243,7 +243,7 @@ plot_expr <- function(genes,
                       lib_to_sample, 
                       group = NULL,
                       facet = NULL){
-
+  
   long_tidy <- cts[genes, , drop = FALSE] %>%
     as.data.frame(.) %>%
     rownames_to_column("gene") %>%
@@ -276,7 +276,7 @@ plot_expr <- function(genes,
     geom_point() +
     labs(x = "",
          y = "Expression")
-    
+  
   if (add_facet){
     p <- p + facet_wrap(as.formula(paste("~", facet)))
   }
@@ -289,4 +289,44 @@ plot_expr <- function(genes,
     theme_cowplot() +
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
 }
+
+
+plot_exon_intron_expr <- function(gene, 
+                                  count_matrices,
+                                  line_col = "blue",
+                                  line_width = 2){
+  if(length(gene) > 1){
+    stop("only 1 gene at a time")
+  }
+  
+  if(is.null(names(count_matrices))){
+    names(count_matrices) <- c("exon", "intron")
+  }
+  long_tidy <- map_dfr(count_matrices, 
+                   ~.x[gene, , drop = FALSE] %>%
+    as.data.frame(.) %>%
+    rownames_to_column("gene") %>%
+    gather(sample, expr, -gene),
+    .id = "count_type")
+  
+  p <- ggplot(long_tidy, aes(sample, expr, group = 1)) +
+    geom_line(color = line_col, size = line_width) + 
+    geom_point(color = "black") +
+    ylim(c(0, NA)) + 
+    facet_wrap(~count_type, scales = "free_y", ncol = 1) +
+    labs(x = "",
+         y = "TPM")
+  
+
+  p <- p + labs(title = gene)
+
+  p + 
+    theme_cowplot() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+}
+
+
+  
+#' emulate python zip
+zip <- function(...) { Map(c, ...) }
 

@@ -15,7 +15,7 @@ library(valr)
 library(tidyverse)
 library(rtracklayer)
 library(doParallel)
-source("../../R/globals.r")
+source("../../../R/globals.r")
 ```
 
 
@@ -260,7 +260,7 @@ intron_metagene <- function(list_of_bws, splice_windows) {
 
 n <- 3
 registerDoParallel(n)
-ris <- foreach(i = bw_info,
+ris <- foreach(i = bw_info[10:19],
               .packages = c("valr", "tidyverse", "rtracklayer"),
               .export = c("intron_metagene", 
                           "read_bigwig",

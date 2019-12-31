@@ -21,6 +21,7 @@ library(tibble)
 library(here)
 library(kentr)
 library(ggrepel)
+library(readxl)
 
 #### Paths ####
 
@@ -34,3 +35,14 @@ db_dir <- file.path(project_dir, "dbases")
 source(file.path(project_dir, "R", "utils.r"))
 
 ggplot2::theme_set(theme_cowplot())
+
+
+#### Annotations ####
+
+annots <- list(
+  drosophila = list(
+    gtf  = "~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf",
+    genome = "~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa",
+    chroms = "~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
+  )
+)
