@@ -364,6 +364,7 @@ names(rs_ddobjs) <- fa_types
 ```
 
 Extract results and make MA plots
+
 ```{r}
 ris_res <- map_dfr(rs_ddobjs, ~results(.x, 
                                        name = "mzt_zygotic_vs_maternal", 
@@ -378,8 +379,11 @@ ris_res <- map_dfr(rs_ddobjs, ~results(.x,
                              "Down", "Not Sig"))) %>% 
   filter(!is.na(sig))
 
+out_tbl <- ris_res %>% 
+   mutate(gene_id = no_pre(row)) %>% 
+  left_join(gene2symbol, by = "gene_id")
 
-write_tsv(ris_res, file.path(outdir, "rissland_deseq_results.tsv.gz"))
+write_tsv(out_tbl, file.path(outdir, "rissland_deseq_results.tsv.gz"))
 ```
 
 ```{r}
@@ -862,6 +866,11 @@ save_plot(file.path(fig_dir, "zelda-binding.pdf"),
           p,
           base_asp = 1.2)
 ```
+
+
+```{r}
+write_tsv(gene_class_df, "processed_files/gene_classes.tsv")
+
 
 
 ```

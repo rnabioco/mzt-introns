@@ -330,3 +330,154 @@ plot_exon_intron_expr <- function(gene,
 #' emulate python zip
 zip <- function(...) { Map(c, ...) }
 
+get_bw <- function(bw_fn,
+                   chrom = NULL,
+                   start = NULL,
+                   end = NULL,
+                   bigWigToBedGraph = "/Users/kriemo/bin/kent/bigWigToBedGraph") {
+  
+  ucsc_args <- vector("character")
+  
+  if (!is.null(chrom)) {
+    ucsc_args <- c(ucsc_args, paste0("-chrom=", chrom))
+  }
+  
+  if (!is.null(start)) {
+    ucsc_args <- c(ucsc_args, paste0("-start=", start))
+  }
+  
+  if (!is.null(end)) {
+    ucsc_args <- c(ucsc_args, paste0("-end=", end))
+  }
+  
+  ucsc_args <- c(ucsc_args,
+                 bw_fn,
+                 "stdout")
+  dat <- system2(bigWigToBedGraph,
+                 ucsc_args,
+                 stdout = TRUE)
+  
+  if(length(dat) > 0)
+    res <- read_tsv(
+      dat,
+      col_names = c("contig",
+                    "start",
+                    "end",
+                    "coverage")
+    ) else{
+      res <- tibble(contig = character(), 
+                    start = numeric(), 
+                    end = numeric(),
+                    coverage = numeric())
+    }
+  
+  res
+}
+
+#' Plot tx coverage
+#' 
+#' @param bams
+#' @param features
+#' @param gtf_obj
+
+plot_tx_coverage <- function(bw_fns, 
+                             transcripts,
+                             gtf_obj,
+                             scale_y = FALSE,
+                             gnome = "dm6",
+                             annotation_label = NULL,
+                             ...){
+  library(GenomicFeatures)
+  library(Gviz)
+  library(GenomicAlignments)
+  
+  options(ucscChromosomeNames=FALSE)
+
+  #subset gtf to get min max coords to plot
+  gfeatures <- gtf_to_gviz(gtf_obj, transcripts)
+  
+  chrom <- as.vector(unique(gfeatures$chromosome))[1]
+  start <- min(gfeatures$start)
+  end <- max(gfeatures$end)
+  strand <- as.vector(unique(gfeatures$strand))[1]
+  
+  # get coverage
+  cov_list <- map(bw_fns, 
+      ~get_bw(.x,
+             chrom = chrom,
+             start = start,
+             end = end) %>% 
+        makeGRangesFromDataFrame(., 
+                                 keep.extra.columns = TRUE,
+                                 seqnames.field = 'contig',
+                                 starts.in.df.are.0based = TRUE,
+                                 ignore.strand = TRUE))
+  
+  if(scale_y){
+    ymax <- map(cov_list, ~.x$coverage) %>% unlist() %>% max()
+    y_limits <- c(0, ymax)
+  } else {
+    y_limits <- NULL
+  }
+  
+  lib_names <- names(bw_fns)
+  
+  if(is.null(lib_names)){
+    lib_names <- as.character(1:length(bw_fns))
+  } 
+  names(cov_list) <- lib_names 
+  
+  dtracks <- pmap(list(cov_list,
+                       names(cov_list),
+                       viridis(length(cov_list))),
+                  function(x, y, z){
+                    DataTrack(range = x, 
+                              name =  as.character(y),
+                              chromosome = chrom, 
+                              genome = gnome,
+                              col.line = z,
+                              ylim = y_limits
+                    )})
+  
+  grtrack <- GeneRegionTrack(gfeatures,
+                             genome = gnome, 
+                             chromosome=chrom, 
+                             name="",
+                          #   stacking = "dense",
+                             col.title = "black")
+  options(scipen=16)
+  if(is.null(annotation_label)){
+    annotation_label <- unique(gfeatures$symbol)[1]
+  }
+  plotTracks(c(list(grtrack), 
+               dtracks),
+             chromosome = chrom,
+             from = start,
+             to = end,
+             type = "S",
+             reverseStrand = strand == "-", 
+             col.title = "black",
+             col.axis = "black",
+             background.title ="transparent",
+             lwd = 1.0, 
+             innerMargin = 10,
+             margin = 50,
+             main = annotation_label,
+             ...)
+
+}
+
+gtf_to_gviz <- function(gtf_obj, features){
+  tx_granges <- gtf_obj[gtf_obj$transcript_id %in% features] 
+  tx_df <- tx_granges %>% 
+    as.data.frame() %>% 
+    filter(type == "exon") %>% 
+    dplyr::select(chromosome = seqnames,
+                  start:strand,
+                  gene = gene_id,
+                  transcript = transcript_id,
+                  exon = exon_id,
+                  symbol = gene_name)
+  tx_df
+  
+}
