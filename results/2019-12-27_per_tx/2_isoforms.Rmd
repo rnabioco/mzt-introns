@@ -212,13 +212,46 @@ How many genes show isoform switching per class?
 gene_classes <- left_join(gene_class_selected, dxr.g, 
                           by = c("gene_id" = "gene"))
 
-group_by(gene_classes, mzt_class) %>% 
+plt_dat <- group_by(gene_classes, mzt_class) %>% 
   mutate(n_genes = n()) %>% 
   ungroup() %>% 
   filter(qval < 0.05) %>% 
   group_by(mzt_class) %>% 
   summarize(`# of genes with switching isoforms` = n(), 
-            `Total # of genes` = unique(n_genes))
+            `Total # of genes` = unique(n_genes),
+            `Percent of genes with switching isoforms` = 100 * `# of genes with switching isoforms` / `Total # of genes`)
+  
+pretty_labels <- c(
+  "pure_maternal" = "Maternal",
+  "mat_zyg_combined" = "Maternal + Zygotic",
+  "pure_zygotic_combined" = "Zygotic"
+)
+
+plt_dat <- mutate(plt_dat, 
+                             mzt_class = factor(mzt_class, 
+                                                levels = names(pretty_labels), 
+                                                labels = pretty_labels))
+
+plt_dat
+
+txt_dat <- mutate(plt_dat,
+                  pretty_text = str_c("n = ", 
+                                      `# of genes with switching isoforms`),
+                  y_pos = `Percent of genes with switching isoforms` + 0.5)
+p <- ggplot(plt_dat, aes(mzt_class, `Percent of genes with switching isoforms`)) +
+  geom_col(aes(fill = mzt_class)) +
+  scale_fill_viridis_d(name = "") +
+  geom_text(data = txt_dat, aes(y = y_pos, 
+                                label = pretty_text)) +
+  labs(y = "% genes with switching isoforms") + 
+  theme(legend.position = "none",
+        axis.title.x = element_blank())
+
+p
+
+save_plot(file.path(fig_dir, "bar_plot_switching_isos.pdf"),
+          p,
+          base_asp = 1.2)
 ```
 
 
@@ -582,7 +615,29 @@ openxlsx::write.xlsx(list(README = README_txt,
 write_lines(README_txt, file.path(out_dir, "README.txt"))
 ```
 
+## Mechanisms of isoform generation
 
+```{r}
+library(txcompare)
+
+mz_annots <- comp_feature_positions(z, m, gtf) %>% 
+  dplyr::select(-tx_type) %>% 
+  left_join(mz_annots, ., by = c("featureID" = "transcript_id"))
+
+tx_pos_features <- dplyr::select(mz_annots, gene_id, same_tss:same_tts) %>% 
+  unique() 
+
+shared <- map(2:4, ~tx_pos_features[!tx_pos_features[[.x]], ]$gene_id)
+names(shared) <- c("Alternative TSS", "Alternative Splicing", "Alternative TTS")
+
+fit <- eulerr::euler(shared) 
+pdf(file.path(fig_dir, "tx_isoform_mechanism_euler.pdf"))
+plot(fit, 
+     fills = list(fill = viridisLite::viridis(3), alpha = 0.5),
+     quantities = list(fontsize = 16), 
+          labels = list(fontsize = 20))
+dev.off()
+```
 
 
 ## Mass spec data
@@ -742,7 +797,8 @@ to_plot <- c(
   "bl",
   "PNUTS",
   "toc",
-  "Cdk2"
+  "Cdk2",
+  "Adar"
 )
 
 tx_figs <- file.path(fig_dir, "tx_figs")
@@ -772,13 +828,14 @@ library(gprofiler2)
 go_res <- gost(unique(additional_annots$gene_id),
                organism = "dmelanogaster",
                ordered_query = FALSE,
-               sources = c("GO", 
-                          "KEGG", 
-                          "REAC", 
-                          "TF"),
-               evcodes = TRUE)
+               # sources = c("GO", 
+               #            "KEGG", 
+               #            "REAC", 
+               #            "TF"),
+               evcodes = TRUE,
+               correction_method = "fdr")
 p <- gostplot(go_res, 
-              interactive = TRUE)
+              interactive = FALSE)
               
 text_data <- group_by(p$data, 
                       source) %>% 
@@ -786,21 +843,6 @@ text_data <- group_by(p$data,
 
 p + 
   geom_text_repel(data = text_data, aes(label = term_name))
-
-go_res[["result"]] %>% 
-  mutate(parents = unlist(map(parents, ~str_c(.x, collapse = ",")))) %>% 
-  write_tsv(., file.path(tbls_dir, str_c(x, "_goterms.tsv")))
-
-go_res[["result"]] %>% 
-  mutate(parents = unlist(map(parents, ~str_c(.x, collapse = ","))),
-         source = str_replace_all(source, "[[:punct:]]", " ")) %>% 
-  select(-significant, -query) %>% 
-  split(., .$source) %>% 
-  openxlsx::write.xlsx(., file.path(tbls_dir, 
-                                    str_c(x, "_goterms.xlsx")))
-})
-
-
 
 res_out <- go_res[["result"]] %>% 
   select(-parents) %>% 
@@ -810,7 +852,46 @@ res_out <- go_res[["result"]] %>%
   select(-gene_id) %>% 
   nest(data = gene_name) %>% 
   mutate(gene_name = map_chr(data, ~str_c(.x$gene_name, collapse = ","))) %>% 
-  dplyr::select(-data, -intersection)
+  dplyr::select(-data, -intersection) %>% 
+  mutate(negative_log10_of_adjusted_p_value = -log10(p_value))
+
+
+plt_dat <- group_by(res_out, source) %>% 
+  arrange(p_value, .by_group = T) %>% 
+  dplyr::slice(1:10) %>% 
+  ungroup()
+
+rename_go <- c(
+  "GO:MF"= "Molecular Function",
+  "GO:CC"= "Cellular Component",
+  "GO:BP" = "Biological Process"
+ # "TF" = "TF binding"
+)
+
+plt_dat <- filter(plt_dat,
+                  source %in% names(rename_go)) %>% 
+                  mutate(
+                  term_name_short = ifelse(str_count(term_name, " ") >= 4,
+                                           word(term_name, 1, 4),
+                                           term_name),
+                  term_name_short = str_remove(term_name_short, "^Factor: "),
+                  source = rename_go[source])
+
+plt_dat$term_name_short <- factor(plt_dat$term_name_short, 
+                                  levels = rev(plt_dat$term_name_short))
+
+p <- ggplot(plt_dat, aes(term_name_short, negative_log10_of_adjusted_p_value)) +
+  geom_col(aes(fill = source), color = "black") +
+  coord_flip() +
+  facet_wrap(~source, drop = T, scales = "free_y", ncol = 1) +
+  scale_fill_brewer(palette = "Greys", direction = -1) + 
+  labs(x = "",
+       y = "-log10(adjusted pvalue)") + 
+  theme_cowplot() +
+  theme(legend.pos = "none")
+p
+save_plot(file.path(fig_dir, "Go_term_enrichment_isoform_genes.pdf"),
+          p, base_asp = 1.2, base_height = 6.5)
          
 ```
 
