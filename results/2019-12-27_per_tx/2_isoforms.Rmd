@@ -17,6 +17,7 @@ source(here::here("R/globals.r"))
 
 fig_dir <- "figs_isoforms"
 dir.create(fig_dir, recursive = TRUE)
+tbl_dir <- "processed_files"
 ```
 
 ```{r}
@@ -754,6 +755,12 @@ n_peps_with_evidence / n_cds_changes
 
 ```
 
+```{r}
+write_tsv(additional_annots, 
+          file.path(out_dir, "all_isoform_annotations.tsv"))
+
+```
+                              
 ## Representative transcripts
 
 Show coverage profiles from transcripts that swtich
@@ -892,7 +899,8 @@ p <- ggplot(plt_dat, aes(term_name_short, negative_log10_of_adjusted_p_value)) +
 p
 save_plot(file.path(fig_dir, "Go_term_enrichment_isoform_genes.pdf"),
           p, base_asp = 1.2, base_height = 6.5)
-         
+        
+write_tsv(res_out, file.path(tbl_dir, "go_terms_isoforms.tsv")) 
 ```
 
 
@@ -933,9 +941,16 @@ res <- mutate(res,
 switching_isos <- inner_join(res, mz_annots,
                              by = c("tx_id" = "featureID"),
                              suffix = c("_tx", "_tx_switch")) 
-group_by(switching_isos, tx_class, sig, count_type) %>% 
+
+group_by(switching_isos, tx_class, sig, count_type, same_tss) %>% 
   summarize(n = n())
 
-filter(switching_isos, tx_class == "zygotic", sig == "up", count_type == "exon") %>% 
-  View()
+filter(switching_isos, 
+       tx_class == "zygotic",
+       sig == "up",
+       count_type == "intron") %>% 
+  group_by()
+
+
+write_tsv(switching_isos, file.path(out_dir, "switching_isos_tx_analysis.tsv.gz"))
 ```

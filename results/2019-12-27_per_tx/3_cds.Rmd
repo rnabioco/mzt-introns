@@ -1,0 +1,235 @@
+---
+title: "CDS changes"
+author: "Kent Riemondy RBI"
+date: "1/6/2020"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+source(here::here("R/globals.r"))
+
+fig_dir <- "figs_cds"
+out_dir <- "output_files"
+dir.create(fig_dir, recursive = TRUE)
+
+```
+
+
+```{r}
+isos <- read_tsv(file.path(out_dir, "all_isoform_annotations.tsv"))
+```
+
+
+## RPFs
+
+Examine RPFs or TE in isoforms. Annotate isoform with riboprofiling evidence if increase post-MZT. 
+
+Show a bar plot wiht # of annotations that are supported by RPFs, Mass Spec, or both.
+
+## Protein domain analysis
+
+Examine zygotic isoforms and count # of isoforms with domain gain, loss, or both.
+
+```{r}
+library(biomaRt)
+ens <- useMart("ensembl", dataset="dmelanogaster_gene_ensembl")
+
+iso_tx_idx <- isos$featureID %>% unique() 
+iso_prot <- getBM(attributes = c("flybasename_transcript","pfam","pfam_start", "pfam_end"), 
+             filters = "flybasename_transcript",
+             values = iso_tx_idx, 
+             mart = ens)
+
+iso_prot[iso_prot == ""] <- NA
+
+if(!file.exists("../../docs/pfam_id_map.txt")){
+  download.file("ftp://ftp.ebi.ac.uk/pub/databases/Pfam/mappings/pdb_pfam_mapping.txt", 
+              "../../docs/pfam_id_map.txt")
+}
+
+pfam_map <- read_tsv("../../docs/pfam_id_map.txt") %>% 
+  mutate(pfam = str_remove(PFAM_ACC, "\\.[0-9]+$")) 
+
+# 
+iso_prot <- left_join(iso_prot, pfam_map, by = "pfam")
+iso_prot <- dplyr::select(iso_prot, flybasename_transcript:pfam_end, PFAM_desc)
+iso_prot <- dplyr::group_by(iso_prot, 
+                           flybasename_transcript, 
+                           pfam, 
+                           pfam_start, 
+                           pfam_end) %>% 
+  dplyr::summarize(PFAM_desc = dplyr::first(PFAM_desc))
+
+
+iso_prot_summary <- left_join(isos, 
+          iso_prot,
+          by = c("featureID" = "flybasename_transcript")) %>% 
+  mutate(pfam_aa = str_sub(aa, pfam_start, pfam_end))
+
+```
+
+
+```{r}
+pfam_iso_domains <- filter(iso_prot_summary, !same_CDS) %>% 
+                           dplyr::select(tx_class, 
+                                         gene_name,
+                                         featureID, 
+                                         pfam,
+                                         pfam_aa)
+
+# see: https://stackoverflow.com/a/55697861
+setdiff_duplicates <- function(x, y) {
+  # get freq tables for x and y
+  x.tab <- table(x)
+  y.tab <- table(y)
+  # if a value is missing in y then set its freq to zero
+  y.tab[setdiff(names(x.tab), names(y.tab))] = 0
+  y.tab <- y.tab[names(y.tab) %in% names(x.tab)]
+  # get the difference of x and y freq and keep if > 0
+  diff.tab <- x.tab[order(names(x.tab))] - y.tab[order(names(y.tab))]
+  diff.tab <- diff.tab[diff.tab > 0]
+  # output vector of x values missing in y
+  unlist(
+    lapply(names(diff.tab), function(val) {
+      rep(val, diff.tab[val])
+    }), 
+    use.names = F)
+}
+
+set_relationships <- function(x, y){
+  
+  x_missing <- is.na(x)
+  y_missing <- is.na(y)
+  
+  if(any(x_missing) && length(x_missing) > 1) {
+      stop("x has NA and other values not supposed to happen")
+  }
+
+  if(any(y_missing) && length(y_missing) > 1) {
+      stop("x has NA and other values not supposed to happen")
+  }
+
+  x_missing <- any(x_missing)
+  y_missing <- any(y_missing)
+  if(x_missing & y_missing){
+    return("same")
+  } else if (x_missing){
+    return("gain")
+  } else if (y_missing) {
+    return("loss")
+  }
+  
+  # check values first
+  element_loss <- length(setdiff_duplicates(x, y)) > 0
+  element_gain <- length(setdiff_duplicates(y, x)) > 0  
+  mixed <- element_loss & element_gain
+  
+  if(mixed){
+    return("gain_and_loss")
+  } else if (element_loss){
+    return("loss")
+  } else if (element_gain){
+    return("gain")
+  } else if (identical(sort(x), sort(y))){
+    return("same")
+  } else {
+    stop("not sure this should happen")
+  }
+}
+
+
+find_domain_similarities <- function(tx_list){
+  
+  map_dfr(tx_list, function(tx){
+    txs <- split(tx, tx$tx_class)
+    
+    domains_present <- set_relationships(txs$maternal$pfam, txs$zygotic$pfam)
+    to_check <- intersect(txs$maternal$pfam, txs$zygotic$pfam) 
+
+    ma <- txs$maternal$pfam_aa
+    names(ma) <- txs$maternal$pfam
+
+    za <- txs$zygotic$pfam_aa
+    names(za) <- txs$zygotic$pfam
+  
+    domain_changes <- c(!za %in% ma, !ma%in% za)
+    
+    tx[["domain_summary"]] <- domains_present
+    tx[["domain_seq_changed"]] <- domain_changes
+    tx
+  })
+}
+
+pfam_iso_domains <- pfam_iso_domains %>% 
+  group_by(gene_name) %>%
+  arrange(desc(tx_class), 
+          .by_group = TRUE)
+
+
+tx_list <- split(pfam_iso_domains, pfam_iso_domains$gene_name) 
+
+domain_summary_out <- find_domain_similarities(tx_list)
+
+plt_dat <- select(domain_summary_out, 
+       gene_name,
+       domain_summary,
+       domain_seq_changed) %>% 
+  group_by(gene_name) %>% 
+  mutate(domain_seq_changed = any(domain_seq_changed),
+         domain_seq_changed = ifelse(domain_summary == "same",
+                                     domain_seq_changed,
+                                     NA)) %>% 
+  unique() %>% 
+  ungroup() %>% 
+  mutate(domain_summary = ifelse(domain_summary == "same" & domain_seq_changed,
+                                 "domain sequence changed",
+                                 domain_summary))
+
+ggplot(plt_dat,
+       aes("!")) +
+    geom_bar(aes(fill = domain_summary))
+
+```
+
+Make some summary plots
+
+```{r}
+  
+euler_input <- isos %>% 
+  filter(!is.na(seq)) %>% #drop transcripts with no CDS
+  select(gene_name, 
+         same_CDS,
+                 same_five_prime_utr,
+                 same_three_prime_utr) %>% 
+  unique() %>% 
+  column_to_rownames("gene_name") 
+euler_input <- !euler_input
+colnames(euler_input) <- c("CDS altered",
+                           "5'UTR altered",
+                           "3'UTR altered")
+fit <- eulerr::euler()
+
+pdf(file.path(fig_dir, "utr_cds_overlap_isoforms.pdf"))
+plot(fit,
+     quantities = list(fontsize = 16),
+     labels = list(fontsize = 20),
+     fill = list(fill = viridisLite::viridis(3), 
+                 alpha = 0.50))
+dev.off()
+```
+
+## uORFs 
+
+Is there any evidence of uORF activity in genes with chagned 5'UTRs?
+
+
+## TE
+
+Is there any evidence for TE changes? Not sure best way to analyze as TE data is per CDS. 
+
+## Show some examples of domain changes and coverage  

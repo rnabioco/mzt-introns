@@ -481,3 +481,15 @@ gtf_to_gviz <- function(gtf_obj, features){
   tx_df
   
 }
+
+
+#' Set defaults in case of namespace conflicts
+#' 
+select <- function(...) {
+  dplyr::select(...)
+}
+
+slice <- function(...){
+  dplyr::slice(...)
+}
+
