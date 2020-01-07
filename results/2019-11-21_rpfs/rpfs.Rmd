@@ -100,6 +100,19 @@ te <- dplyr::select(
   `0-1_h`:`5-6_h`
 )
 
+rpfs <- txirpf$abundance 
+colnames(rpfs) <- filter(mdata, type == "RNA") %>%
+                         pull(stage)
+
+rpfs <- rpfs %>% 
+  as.data.frame() %>% 
+  rownames_to_column("transcript_id") %>% 
+  dplyr::select(
+  transcript_id,
+  Stage_11:Stage_14,
+  Activated_egg,
+  `0-1_h`:`5-6_h`
+)
 ```
 
 
@@ -123,13 +136,27 @@ te <- mutate(te,
 te <- bind_rows(dup_tes, te)
 
 write_tsv(te, "transcript_level_te.tsv.gz")
+
+
+dup_rpfs <- left_join(dup_txs, rpfs, by = c("RetainedTxp" = "transcript_id")) %>% 
+  dplyr::select(transcript_id = DuplicateTxp,
+         representative_cds_transcript = RetainedTxp, 
+         everything())
+
+rpfs <- mutate(rpfs, 
+             representative_cds_transcript = transcript_id)
+
+rpfs <- bind_rows(dup_rpfs, rpfs)
+
+write_tsv(rpfs, "transcript_level_rpfs.tsv.gz")
+
 ```
 
 ```{r}
 iso_annots <- read_tsv("../2019-06-09_isoform/isoform_summaries.tsv.gz")
 
 iso_utr_changes <- iso_annots %>% 
-  filter(same_three_prime_utr, same_CDS, !same_five_prime_utr) 
+  filter(!same_CDS) 
 
 te_iso_changes <- iso_annots %>%
   select(tx_class, featureID, gene_name) %>% 
