@@ -1,0 +1,119 @@
+---
+title: "figure 4 5'/3'UTR vignettes"
+author: "Kent Riemondy RBI"
+date: '`r Sys.Date()`'
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+source(here::here("R/globals.r"))
+
+fig_dir <- "figs_utrs"
+dir.create(fig_dir, recursive = TRUE)
+```
+
+
+## 5'UTR length
+
+5'UTRs tend to increase in length in zygotic isoforms. Is a change in 5'UTR length associated with changes in translational efficiency?
+
+```{r}
+te <- read_tsv("../2019-11-21_rpfs/transcript_level_te.tsv.gz")
+iso_annots <- read_tsv("../2019-06-09_isoform/isoform_summaries.tsv.gz")
+
+utr_lengths <- iso_annots %>% 
+  filter(same_three_prime_utr, same_CDS, !same_five_prime_utr) %>% 
+  select(gene_id, five_prime_utr_length, tx_class) %>% 
+  pivot_wider(names_from = tx_class,
+              values_from = five_prime_utr_length) %>% 
+  mutate(delta_lengths = zygotic - maternal)
+  
+delta_5utr <- iso_annots %>% 
+  filter(same_three_prime_utr, same_CDS, !same_five_prime_utr) %>% 
+  pull(featureID)
+
+te_iso_changes <- iso_annots %>%
+  filter(featureID %in% delta_5utr) %>% 
+  select(tx_class, featureID, gene_name) %>% 
+  left_join(te, by = c("featureID" = "transcript_id")) 
+  
+
+te_iso_changes <- na.omit(te_iso_changes)
+sample_order <- dplyr::select(te, Stage_11:`5-6_h`) %>% 
+  colnames()
+  
+te_changes <- te_iso_changes %>% 
+  pivot_longer(cols = -(tx_class:representative_cds_transcript)) %>% 
+  mutate(sample = factor(name, levels = sample_order),
+         value = log2(value)) %>% 
+  select(representative_cds_transcript:sample) %>% 
+  unique()
+
+
+ggplot(te_changes, aes(sample, value)) + 
+  geom_violin(aes(fill = sample),
+              position = position_dodge()) +
+  labs(x = "",
+       y = "Translation Efficiency (log2)") +
+  scale_fill_brewer(palette = "Set1", 
+                    name = "") +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)
+  )
+
+
+te_changes <- te %>% 
+  pivot_longer(cols = -(transcript_id:representative_cds_transcript)) %>% 
+  mutate(sample = factor(name, levels = sample_order),
+         value = log2(value)) %>% 
+  select(representative_cds_transcript:sample) %>% 
+  unique()
+
+te_changes <- na.omit(te_changes)
+ggplot(te_changes, aes(sample, value)) + 
+  geom_violin(aes(fill = sample),
+              position = position_dodge()) +
+  labs(x = "",
+       y = "Translation Efficiency (log2)") +
+  scale_fill_brewer(palette = "Set1", 
+                    name = "") +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)
+  )
+
+```
+
+Many 5'UTR changes appear to be driven by splicing rather than changes in 5'UTR start.
+
+
+```{r}
+gtf <- tidy_gtf(annots$drosophila$gtf)
+
+tx_starts <- filter(gtf, type == "transcript") %>% 
+  group_by(transcript_id) %>% 
+  summarize(tx_start = ifelse(strand == "+",
+                              start,
+                              end))
+
+utr5_annots <- iso_annots %>% 
+  filter(same_three_prime_utr, same_CDS, !same_five_prime_utr) %>% 
+  left_join(tx_starts, by = c("featureID" = "transcript_id"))
+
+utr5_annots %>% 
+  group_by(gene_id) %>% 
+  summarize(same_start_site = ifelse(length(unique(tx_start)) == 1,
+                TRUE,
+                FALSE)) %>% View(
+                  
+                )
+```

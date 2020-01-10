@@ -742,13 +742,15 @@ write_tsv(additional_annots, file.path(out_dir, "isoform_summaries_with_peps.tsv
 ```{r}
 n_peps_with_evidence <- additional_annots %>% 
   filter(tx_class == "zygotic",
-         !same_CDS) %>% 
+         !same_CDS,
+         !is.na(seq)) %>% 
   filter(!is.na(pep_tx)) %>% 
   nrow()
 
 n_cds_changes <- additional_annots %>% 
   filter(tx_class == "zygotic",
-         !same_CDS) %>% 
+         !same_CDS,
+         !is.na(seq)) %>% 
   nrow()
 
 n_peps_with_evidence / n_cds_changes
@@ -800,13 +802,31 @@ tx_summary_plots <- function(bws,
                  )
 }
 
-to_plot <- c(
-  "bl",
+to_plot <- c("l(2)k09913",
   "PNUTS",
+  "cnn",
+  "Zn72D",
+  "Rb97D",
+  "pyd",
+  "CG8331",
+  "Pk92B",
+  "yata",
+  "hts",
+  "bl",
+  "eIF-2gamma",
+  "Npc1a",
+  "Su(var)2-10",
   "toc",
-  "Cdk2",
-  "Adar"
-)
+  "Hph",
+  "blot",
+  "Mhcl",
+  "SC35",
+  "CG4658",
+  "arm",
+  "Nmnat",
+  "Adar",
+  "Plip",
+  "lola")
 
 tx_figs <- file.path(fig_dir, "tx_figs")
 dir.create(tx_figs, showWarnings = FALSE)
