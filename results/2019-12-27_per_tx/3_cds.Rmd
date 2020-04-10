@@ -473,7 +473,7 @@ euler_input <- !euler_input
 colnames(euler_input) <- c("CDS altered",
                            "5'UTR altered",
                            "3'UTR altered")
-fit <- eulerr::euler()
+fit <- eulerr::euler(euler_input)
 
 pdf(file.path(fig_dir, "utr_cds_overlap_isoforms.pdf"))
 plot(fit,
@@ -490,8 +490,92 @@ dev.off()
 
 ## uORFs 
 
-Is there any evidence of uORF activity in genes with chagned 5'UTRs?
+Is there any evidence of uORF activity in genes with changed 5'UTRs?
 
+```{r}
+gtf_tbl <- tidy_gtf(annots$drosophila$gtf) 
+
+utr5_annot <- gtf_tbl %>% 
+  filter(transcript_id %in% isos$featureID,
+         type == "five_prime_utr") %>% 
+  group_by(strand)
+
+
+mdata <- read_tsv("../2019-11-21_rpfs/updated_eichhorn_mdata.txt") %>% 
+  mutate(stage = str_split(sample_title, "_") %>% 
+           map_chr(~str_c(.x[1:2], collapse = "_")),
+         gt = str_split(sample_title, "_") %>% 
+           map_chr(~.x[3]),
+         treatment = str_split(sample_title, "_") %>% 
+           map_chr(~.x[4]),
+         treatment = ifelse(treatment =="No",
+                            str_split(sample_title, "_") %>% 
+           map_chr(~str_c(.x[4:5], collapse = "_")),
+           treatment),
+         type = str_match(sample_title, 
+                          "RPF|RNA|PAL")[, 1]) 
+
+
+mdata <- mdata %>% 
+  filter(type != "PAL",
+         gt == "wt")
+
+mdata <- mdata %>% 
+  arrange(sample_title, 
+          type)
+
+ribo_mdata <- filter(mdata, type == "RNA")
+
+fc_files  <- str_c("../../data/featurecounts/drosophila/EICHHORN/",
+                   ribo_mdata$run_accession, 
+                   "_5utr_tx_counts.tsv")
+fc_5utr_mat <- map(fc_files,
+    ~read_tsv(.x, comment = "#") %>% 
+      select(Geneid, 7)) %>% 
+  Reduce(function(x,y){inner_join(x,
+                                  y, 
+                                  by = "Geneid")},
+         x = .)
+
+colnames(fc_5utr_mat) <- basename(colnames(fc_5utr_mat)) %>% 
+  str_remove("_sorted.bam")
+
+# read in summary files and sum up assigned,_NoFeature, and noambiguity for
+# total read count for normalization.
+
+fc_summary_files  <- str_c("../../data/featurecounts/drosophila/EICHHORN/",
+                   ribo_mdata$run_accession, 
+                   "_5utr_tx_counts.tsv.summary")
+names(fc_summary_files) <- ribo_mdata$run_accession
+fc_5utr_summary <- imap(fc_summary_files,
+                       ~read_tsv(.x) %>% 
+                         .[c(1, 10, 12), 2, drop = TRUE] %>% 
+                         sum())
+                         
+tmp_mat <- fc_5utr_mat[2:length(fc_5utr_mat)]
+
+for(i in colnames(tmp_mat)){
+  tmp_mat[, i] <- 1e6 * (tmp_mat[, i] / fc_5utr_summary[[i]])
+}
+
+fc_5utr_mat[2:length(fc_5utr_mat)] <- tmp_mat
+
+iso_5utr_rpfs <- filter(fc_5utr_mat, Geneid %in% isos$featureID)
+
+colnames(iso_5utr_rpfs) <-  left_join(
+  tibble(run_accession = colnames(iso_5utr_rpfs)), 
+  ribo_mdata) %>% 
+  mutate(sample_title = ifelse(is.na(sample_title),
+                               "Geneid",
+                               sample_title)) %>% 
+  pull(sample_title)
+
+utr_counts <- isos %>% 
+  dplyr::select(featureID, tx_class, gene_name, starts_with("same")) %>% 
+  left_join(iso_5utr_rpfs, by = c("featureID" = "Geneid")) 
+
+write_tsv(utr_counts, "transcript_level_5utr_counts.tsv.gz")
+```
 
 ## TE
 
@@ -509,11 +593,33 @@ cds <- txcompare::gtf_to_seq(cds_gtf, annots$drosophila$genome, type_field = "CD
 cds <- mutate(cds, seq = str_sub(seq, start = 51))
 cds <- filter(cds, nchar(seq) > 50)
 write_fasta(cds, "ribosome_profiling_cds.fa", header_col = "transcript_id")
+
+mdata <- read_tsv("../2019-11-21_rpfs/updated_eichhorn_mdata.txt") %>% 
+  mutate(stage = str_split(sample_title, "_") %>% 
+           map_chr(~str_c(.x[1:2], collapse = "_")),
+         gt = str_split(sample_title, "_") %>% 
+           map_chr(~.x[3]),
+         treatment = str_split(sample_title, "_") %>% 
+           map_chr(~.x[4]),
+         treatment = ifelse(treatment =="No",
+                            str_split(sample_title, "_") %>% 
+           map_chr(~str_c(.x[4:5], collapse = "_")),
+           treatment),
+         type = str_match(sample_title, 
+                          "RPF|RNA|PAL")[, 1]) 
+
+mdata <- mdata %>% 
+  filter(type != "PAL",
+         gt == "wt")
+
+mdata <- mdata %>% 
+  arrange(sample_title, 
+          type)
 ```
 
 
 ```{r}
-mdata <- read_tsv("updated_eichhorn_mdata.txt") %>% 
+mdata <- read_tsv("../2019-11-21_rpfs/updated_eichhorn_mdata.txt") %>% 
   mutate(stage = str_split(sample_title, "_") %>% 
            map_chr(~str_c(.x[1:2], collapse = "_")),
          gt = str_split(sample_title, "_") %>% 
@@ -624,7 +730,8 @@ te <- bind_rows(dup_tes, te)
 write_tsv(te, "transcript_level_te.tsv.gz")
 
 
-dup_rpfs <- left_join(dup_txs, rpfs, by = c("RetainedTxp" = "transcript_id")) %>% 
+dup_rpfs <- left_join(dup_txs, rpfs, 
+                      by = c("RetainedTxp" = "transcript_id")) %>% 
   dplyr::select(transcript_id = DuplicateTxp,
          representative_cds_transcript = RetainedTxp, 
          everything())
@@ -637,6 +744,18 @@ rpfs <- bind_rows(dup_rpfs, rpfs)
 write_tsv(rpfs, "transcript_level_rpfs.tsv.gz")
 
 ```
+
+```{r}
+#calc tpm fold changes and examine across dev time 
+
+
+
+
+```
+
+
+
+
 
 ```{r}
 iso_annots <- read_tsv("../2019-06-09_isoform/isoform_summaries.tsv.gz")
@@ -726,3 +845,94 @@ rpf_5utr_counts <- rpf_5utr_counts %>%
 write_tsv(rpf_5utr_counts, "5putr_rpf_counts.tsv.gz")
 ```
 
+```{R}
+a <- read_tsv("transcript_level_5utr_counts.tsv.gz")
+```
+
+
+
+## Plot transcripts with riboprofiling and RNA-seq coverage
+
+## Representative transcripts
+
+Show coverage profiles from transcripts that swtich
+```{r}
+base_url <- "http://amc-sandbox.ucdenver.edu/User33/rissland/bws/"
+sras <- filter(mdata, strain == "w1118") %>% pull(Run)
+ids <- filter(mdata, strain == "w1118") %>% pull(developmental_stage)
+
+bws <- c("_fwd.bw", "_rev.bw")
+names(bws) <- c("+", "-")
+
+bw_fns <- map(bws, function(x) {
+  out <- paste0(base_url, sras, x)
+  names(out) <- ids
+  out
+}) 
+
+
+gtf_obj <- import(annots$drosophila$gtf)
+
+tx_summary_plots <- function(bws, 
+                             gene,
+                             isoform_annotation_df,
+                             ...){
+  
+  to_plot <- filter(additional_annots, gene_name == gene)
+  strand <- unique(to_plot$strand)[1]
+
+  features <- unique(to_plot$featureID)
+  plot_tx_coverage(bw_fns[[strand]], 
+                 features,
+                 gtf_obj,
+                 scale_y = FALSE,
+                 cex.main = 0.75,
+                 rotation.title=0,
+                 ...
+                 )
+}
+
+to_plot <- c("l(2)k09913",
+  "PNUTS",
+  "cnn",
+  "Zn72D",
+  "Rb97D",
+  "pyd",
+  "CG8331",
+  "Pk92B",
+  "yata",
+  "hts",
+  "bl",
+  "eIF-2gamma",
+  "Npc1a",
+  "Su(var)2-10",
+  "toc",
+  "Hph",
+  "blot",
+  "Mhcl",
+  "SC35",
+  "CG4658",
+  "arm",
+  "Nmnat",
+  "Adar",
+  "Plip",
+  "lola")
+
+tx_figs <- file.path(fig_dir, "tx_figs")
+dir.create(tx_figs, showWarnings = FALSE)
+
+walk(to_plot,
+    ~{
+      pdf(file.path(tx_figs,
+                    str_c(.x, "_tx_coverage.pdf")),
+          width = 6,
+          height = 3)
+      tx_summary_plots(bw_fns, gene = .x, 
+                 isoform_annotation_df = additional_annots,
+                 title.width = 1.5,
+                 sizes = c(0.1, rep(0.25, 5)),
+                 fontsize = 8,
+                 cex.title = 1)
+      dev.off()
+    })
+```

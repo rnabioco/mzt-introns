@@ -493,3 +493,65 @@ slice <- function(...){
   dplyr::slice(...)
 }
 
+
+#' Find exact non-overlapping matches in DNA seq
+#' 
+#' @param seq character vector of sequences to query  
+#' @param q_str string to find (case insensitive query)
+#' @param rev_comp also seach reverse complement (Default = FALSE)
+#' @examples 
+#' seq <- "ATCGTAGCTGATGAATAAATGCTGATGCTGTAG"
+#' find_seq_match(seq, "AATAAA")
+
+find_seq_match <- function(seq, q_str, rev_comp = FALSE) {
+  seq <- str_to_upper(seq)
+  q_str <- str_to_upper(q_str)
+  stringr::str_locate_all(seq, fixed(q_str))
+}
+
+count_seq_matches <- function(seq, q_str, rev_comp = FALSE){
+  map_int(find_seq_match(seq, q_str), nrow)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
