@@ -19,9 +19,11 @@ library(tximport)
 library(DESeq2)
 library(tibble)
 library(here)
-library(kentr)
 library(ggrepel)
 library(readxl)
+library(eisaR)
+library(doParallel)
+
 
 #### Paths ####
 
