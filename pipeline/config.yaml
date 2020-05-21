@@ -8,7 +8,11 @@ DATA:
 SRC: 
   "../src" 
 
-# directory for databases
+# directory for R scripts
+RSRC:
+  "../R"
+
+  # directory for databases
 DBASES: 
   "../dbases" 
 
@@ -100,6 +104,18 @@ RISSLAND:
     bt_map: " --nofw "
     fq: 
         - ".fastq.gz"
+
+GRAVELEY:
+    trim: " -q 10 "
+    intron_count: " --minOverlap 5 -s 2 "
+    exon_count: " --fracOverlap 1 -s 2 "
+    map: " --fldMean 200 --fldSD 20 --libType 'ISR' "
+    idx: " -k 21 "
+    stranded: "reverse"
+    bt_map: " --nofw "
+    fq: 
+        - "_1_R1.fastq.gz"
+        - "_1_R2.fastq.gz"
 
 WHITE:
     trim: " "

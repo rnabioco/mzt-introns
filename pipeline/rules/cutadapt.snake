@@ -38,8 +38,8 @@ rule cutadapt_single:
   input:
     _fq_types, 
   output:
-    temp(path.join("{data}", "fastq", "trimmed", "{species}", "{expt}",
-      "{sample}_trimmed.fastq.gz"))
+    path.join("{data}", "fastq", "trimmed", "{species}", "{expt}",
+      "{sample}_trimmed.fastq.gz")
   params:
     settings = _trim_settings,
     job_name = "trim.{sample}",

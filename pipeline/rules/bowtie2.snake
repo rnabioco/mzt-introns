@@ -96,7 +96,7 @@ rule salmon_alignment_mode:
         --numBootstraps 50 
       """
 
-rule bt_masked:
+rule bt:
     """
     run bowtie2 on masked transcriptome 
     bowtie2 2.3.2
@@ -129,7 +129,7 @@ rule bt_masked:
           > {output.bam}  
       """
 
-rule bt_masked_idx:
+rule bt_idx:
     """
     build bowtie2 index on masked transcriptome 
     bowtie2 2.3.2
