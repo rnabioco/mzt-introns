@@ -1,0 +1,70 @@
+# config for pre-mRNA quantification snakemake pipeline #
+
+
+# directory with fastqs and generated data
+DATA: 
+    "../data-rerun"
+
+# directory for auxillary scripts
+SRC: 
+  "../src" 
+
+# directory for R scripts
+RSRC:
+  "../R"
+
+  # directory for databases
+DBASES: 
+    "../dbases-rerun" 
+
+GENOMES:
+    drosophila: "/beevol/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
+
+TRANSCRIPTS:
+    drosophila: "/beevol/home/riemondy/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf"
+
+INTRONS:
+    drosophila: "/beevol/home/riemondy/Projects/mzt-introns/dbases/drosophila/saf/fly_introns.saf"
+
+EXONS:
+    drosophila: "/beevol/home/riemondy/Projects/mzt-introns/dbases/drosophila/saf/fly_exons.saf"
+
+CHROM_SIZES:
+    drosophila: "/beevol/home/riemondy/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
+
+GENOME_DIRS:
+    drosophila: "/beevol/home/riemondy/Projects/shared_dbases/star/drosophila/BDGP6"
+
+SALMON_K:
+    drosophila: 21
+
+EICHHORN:
+    trim: " -q 10 -a 'TCGTATGCCGTCTTCTGCTT' -u 8 "
+    intron_count: " --minOverlap 5 -s 1 "
+    exon_count: " --fracOverlap 1 -s 1 "
+    map: " --fldMean 40 --fldSD 4 --libType 'SF' "
+    stranded: "forward"
+    idx: " -k 21 "
+    bt_map: " --norc "
+    fq: 
+        - ".fastq.gz"
+
+RISSLAND:
+    trim: " -q 10 -a 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC' "
+    intron_count: " --minOverlap 5 -s 2 "
+    exon_count: " --fracOverlap 1 -s 2 "
+    map: " --fldMean 200 --fldSD 20 --libType 'SR' "
+    idx: " -k 21 "
+    stranded: "reverse"
+    bt_map: " --nofw "
+    fq: 
+        - ".fastq.gz"
+
+T0_SAMPLES:
+    - "SRR5469986"
+    - "SRR5469998"
+
+T0_EXPT: "RISSLAND"
+
+LIB_PARAMS: "fly_lib_params.tsv"
+

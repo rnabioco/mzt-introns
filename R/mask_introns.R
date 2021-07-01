@@ -10,7 +10,7 @@
 eisa_dir <- args[1]
 species <- args[2]
 outpath <- args[3]
-fwd_bws <- args[4]
+fwd_bws <- args[4:length(args)]
 
 source(here::here("R/globals.r"))
 

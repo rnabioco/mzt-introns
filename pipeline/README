@@ -1,0 +1,9 @@
+
+# Requirements
+    - Bowtie2 (>=2.4.4)
+    - fastqc
+    - samtools 
+    - STAR
+    - salmon/1.1.0
+    - R (eisaR, tximport, valr)
+    - subread

@@ -1,5 +1,5 @@
-
 ''' rules to count reads overlapping genes '''
+from pathlib import Path
 
 def _intron_settings(wildcards):
   """ lookup global dictionary LIB_MAP via sample
@@ -9,13 +9,15 @@ def _intron_settings(wildcards):
   id = os.path.basename(wildcards.sample)
   if id in LIB_MAP:
      lib_attrs = LIB_MAP[id]
-     trim_settings = config[lib_attrs]["intron_count"]
   else:
-     print("WARNING: no intron settings found for library: {}".format(id),
-       file = sys.stderr)
-     trim_settings = ""
+     sys.exit(f"config settings for {id} not found ")
 
-  return trim_settings
+  if "intron_count" in config[lib_attrs]:    
+     settings = config[lib_attrs]["intron_count"]
+  else:
+     settings = None
+
+  return settings
 
 def _exon_settings(wildcards):
   """ lookup global dictionary LIB_MAP via sample
@@ -25,17 +27,19 @@ def _exon_settings(wildcards):
   id = os.path.basename(wildcards.sample)
   if id in LIB_MAP:
      lib_attrs = LIB_MAP[id]
-     trim_settings = config[lib_attrs]["exon_count"]
   else:
-     print("WARNING: no exon settings found for library: {}".format(id),
-       file = sys.stderr)
-     trim_settings = ""
+     sys.exit(f"config settings for {id} not found ")
 
-  return trim_settings
+  if "exon_count" in config[lib_attrs]:    
+     settings = config[lib_attrs]["exon_count"]
+  else:
+     settings = None  
+
+  return settings
 
 rule fc_introns:
   input:
-    bam = "{data}/star/{species}/{expt}/{sample}_sorted.bam",
+    bam = "{data}/star/{species}/{expt}/{sample}/{sample}_sorted.bam",
   output:
     "{data}/featurecounts/{species}/{expt}/{sample}_intron_counts.tsv",
   params:
@@ -48,20 +52,24 @@ rule fc_introns:
   threads:
     12
   resources: all_threads=12
-  shell:
-    """
-    featureCounts \
-     {params.intron_count} \
-    -F 'SAF' \
-    -a {params.annots} \
-    -o {output} \
-    -T {threads} \
-    {input}
-    """
+  run:
+    if params.intron_count:
+      shell(
+        """
+        featureCounts \
+          {params.intron_count} \
+          -F 'SAF' \
+          -a {params.annots} \
+          -o {output} \
+          -T {threads} \
+          {input}
+        """)
+    else:
+      Path(output[0]).touch()
 
 rule fc_exons:
   input:
-    bam = "{data}/star/{species}/{expt}/{sample}_sorted.bam",
+    bam = "{data}/star/{species}/{expt}/{sample}/{sample}_sorted.bam",
   output:
     "{data}/featurecounts/{species}/{expt}/{sample}_exon_counts.tsv",
   params:
@@ -74,14 +82,19 @@ rule fc_exons:
   threads:
     12
   resources: all_threads=12
-  shell:
-    """
-    featureCounts \
-     {params.exon_count} \
-    -F 'SAF' \
-    -a {params.annots} \
-    -o {output} \
-    -T {threads} \
-    {input}
-    """
+  run:
+    if params.exon_count:
+      shell(
+        """
+        featureCounts \
+          {params.exon_count} \
+          -F 'SAF' \
+          -a {params.annots} \
+          -o {output} \
+          -T {threads} \
+          {input}
+       """)
+    else:
+      Path(output[0]).touch()
+
 

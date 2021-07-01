@@ -1,0 +1,61 @@
+# config for pre-mRNA quantification snakemake pipeline #
+
+
+# directory with fastqs and generated data
+DATA: 
+    "../data-rerun"
+
+# directory for auxillary scripts
+SRC: 
+  "../src" 
+
+# directory for R scripts
+RSRC:
+  "../R"
+
+  # directory for databases
+DBASES: 
+    "../dbases-rerun" 
+
+GENOMES:
+    zebrafish:  "/beevol/home/riemondy/Projects/shared_dbases/genomes/zebrafish/danRer10/danRer10.fa"
+
+TRANSCRIPTS:
+    zebrafish: "/beevol/home/riemondy/Projects/shared_dbases/annotation/zebrafish/danRer10/danRer10.gtf"
+
+#INTRONS:
+    #    drosophila: "/beevol/home/riemondy/Projects/mzt-introns/dbases/drosophila/saf/fly_introns.saf"
+
+#EXONS:
+    #    drosophila: "/beevol/home/riemondy/Projects/mzt-introns/dbases/drosophila/saf/fly_exons.saf"
+
+CHROM_SIZES:
+    zebrafish:  "/beevol/home/riemondy/Projects/shared_dbases/genomes/zebrafish/danRer10/danRer10.fa.fai"
+
+GENOME_DIRS:
+    zebrafish: "/beevol/home/riemondy/Projects/shared_dbases/star/zebrafish/danRer10"
+
+SALMON_K:
+    zebrafish: 31
+
+WHITE:
+    trim: " "
+    intron_count: " --minOverlap 5 -s 2 -p "
+    exon_count: " --fracOverlap 1 -s 2 -p "
+    map: " -l ISR  "
+    idx: " -k 31 "
+    stranded: "reverse"
+    bt_map: " --nofw "
+    fq: 
+        - "_1.fastq.gz"
+        - "_2.fastq.gz"
+
+T0_SAMPLES: 
+    - "ZMP_phenotype_133_B"
+    - "ZMP_phenotype_133_D"
+    - "ZMP_phenotype_133_E"
+    - "ZMP_phenotype_133_F"
+    - "ZMP_phenotype_133_G"
+
+T0_EXPT: "WHITE"
+

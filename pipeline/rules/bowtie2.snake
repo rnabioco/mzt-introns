@@ -1,42 +1,4 @@
-
 """ calculate primary expression levels """ 
-
-    
-#rule salmon_alignments_mode:
-#    """
-#    run salmon on pre-mRNA indexes
-#    Salmon v0.9.1
-#    """
-#    input:
-#      idx = path.join(DBASES, "{species}", "salmon", "hash.bin"),
-#      R1 = _fq_types,
-#      #R1 = "{data}/fastq/trimmed/{species}/{expt}/{sample}_trimmed.fastq.gz",
-#      gtf = path.join(DBASES, "{species}", "primary_transcripts.gtf")
-#    output:
-#      path.join("{data}", "salmon", "{species}", "{expt}", "{sample}", "quant.sf")
-#    params:
-#      io = _input_options,
-#      settings = _map_settings,
-#      idx = path.join(DBASES, "{species}", "salmon"),
-#      out_dir = path.join("{data}", "salmon", "{species}", "{expt}", "{sample}"),
-#      job_name = "salmon_fishin",
-#      memory = "select[mem>30] rusage[mem=30]",
-#    log:
-#      path.join("{data}", "salmon", "logs", "{species}", "{expt}", "{sample}")
-#    threads: 12
-#    resources: all_threads=12
-#    shell:
-#      """
-#      salmon quant \
-#        -i {params.idx} \
-#        {params.settings} \
-#        {params.io} \
-#        -o {params.out_dir} \
-#        -p {threads} \
-#        --numBootstraps 50 \
-#        -g {input.gtf} 
-#      """
-#
 
 def _btmap_settings(wildcards):
   """ lookup global dictionary LIB_MAP via sample
@@ -64,6 +26,22 @@ def _btinput_options(wildcards):
   else:
       sys.exit("no fastq suffixes found for library: {}".format(id))
   return io_option
+
+def _map_settings(wildcards):
+  """ lookup global dictionary LIB_MAP via sample
+      wildcard and return settings for salmon 
+      based on experiment definition in config file 
+  """
+  id = os.path.basename(wildcards.sample)
+  if id in LIB_MAP:
+     lib_attrs = LIB_MAP[id]
+     map_settings = config[lib_attrs]["map"]
+  else:
+     print("WARNING: no map settings found for library: {}".format(id),
+       file = sys.stderr)
+     map_settings = ""
+
+  return map_settings
 
 rule salmon_alignment_mode:
     """
@@ -98,7 +76,7 @@ rule salmon_alignment_mode:
 
 rule bt:
     """
-    run bowtie2 on masked transcriptome 
+    run bowtie2 against transcriptome 
     bowtie2 2.3.2
     """
     input:
@@ -131,7 +109,7 @@ rule bt:
 
 rule bt_idx:
     """
-    build bowtie2 index on masked transcriptome 
+    build bowtie2 index 
     bowtie2 2.3.2
     """
     input:

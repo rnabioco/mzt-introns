@@ -18,7 +18,7 @@ library(dplyr)
 library(purrr)
 library(stringr)
 library(Biostrings)
-
+library(GenomicRanges)
 
 outdir <- file.path(outpath, "eisa")
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
@@ -31,6 +31,16 @@ grl <- getFeatureRanges(
   joinOverlappingIntrons = FALSE, 
   verbose = TRUE
 )
+
+# grl may contain out of bounds regions (off chromosome entries)
+chrom_sizes <- read_tsv(str_c(fa, ".fai"),
+         col_types = 'ci---', 
+         col_names = c("chrom", "size"))
+
+chrom_sizes <- left_join(data.frame(chrom = seqlevels(grl)), chrom_sizes)
+seqinfo(grl) <- Seqinfo(seqnames = chrom_sizes$chrom, seqlengths = chrom_sizes$size)
+
+grl <- trim(grl)
 
 seqs <- GenomicFeatures::extractTranscriptSeqs(
   x = Rsamtools::FaFile(fa), 

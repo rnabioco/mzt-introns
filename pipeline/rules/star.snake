@@ -32,23 +32,14 @@ def _fqlist_to_str(wildcards):
 
 rule star_align:
     """ map reads to genome/transcriptome using STAR 
-    STAR_2.5.1b
     """
     input:
       _fq_types, 
       idx_dummy_file = path.join("{data}", "star", "logs", "{species}_index_tracking.txt"), 
     output:
-      bam =
-      "{data}/star/{species}/{expt}/{sample}/{sample}_sorted.bam",
-      bai =
-      "{data}/star/{species}/{expt}/{sample}/{sample}_sorted.bam.bai",
-     # bg1 = "{data}/star/{species}/{expt}/{sample}/{sample}_Signal.Unique.str1.out.bg",
-     # bg2 =  "{data}/star/{species}/{expt}/{sample}/{sample}_Signal.Unique.str2.out.bg",
-     # bg3 =  "{data}/star/{species}/{expt}/{sample}/{sample}_Signal.UniqueMultiple.str1.out.bg",
-     # bg4 =  "{data}/star/{species}/{expt}/{sample}/{sample}_Signal.UniqueMultiple.str2.out.bg",
+      bam = "{data}/star/{species}/{expt}/{sample}/{sample}_sorted.bam",
+      bai = "{data}/star/{species}/{expt}/{sample}/{sample}_sorted.bam.bai",
     params:
-      use_sjs =  "yes" if SPLICE_JUNCTS else "no", 
-      splice_junctions = SPLICE_JUNCTS if SPLICE_JUNCTS else "none",
       job_name = "star",
       tmpbam = "{data}/star/{species}/{expt}/{sample}/{sample}_Aligned.out.bam",
       genome = lambda wildcards: GENOME_DIRS[wildcards.species],
@@ -64,14 +55,6 @@ rule star_align:
     resources: all_threads=12
     shell:
       """
-      # use bash to conditionally define --sjdbFileChrStartEnd
-      
-      if [ "{params.use_sjs}" != "no" ]
-      then
-         sjunctions="--sjdbFileChrStartEnd {params.splice_junctions} "
-      else
-         sjunctions=""
-      fi 
 
       STAR \
         --genomeDir {params.genome}  \
@@ -88,8 +71,7 @@ rule star_align:
         --outSAMunmapped Within \
         --outSAMtype BAM Unsorted --outSAMmode Full \
         --limitSjdbInsertNsj=1500000 \
-        --outSAMattributes All  --outSAMattrIHstart 0  --outSAMstrandField intronMotif \
-        $sjunctions
+        --outSAMattributes All  --outSAMattrIHstart 0  --outSAMstrandField intronMotif 
 
       samtools sort -@ 11 {params.tmpbam} > {output.bam}
       samtools index -@ 4 {output.bam}

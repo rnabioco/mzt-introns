@@ -326,9 +326,9 @@ rule bam_to_bigwig_cpm:
     bai = path.join(DATA, "star", "{species}", "{expt}", "{sample}",
         "{sample}_sorted.bam.bai"),
   output:
-    fwd = path.join(DATA, "bigwigs_norm", "{species}", "{expt}", 
+    fwd = path.join(DATA, "bigwigs", "{species}", "star", "{expt}", 
     "{sample}_fwd.bw"),
-    rev = path.join(DATA, "bigwigs_norm", "{species}", "{expt}",
+    rev = path.join(DATA, "bigwigs", "{species}", "star", "{expt}",
     "{sample}_rev.bw"),
   params:
     strand_settings = _deeptools_strand_setting,

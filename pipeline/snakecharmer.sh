@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-
 #BSUB -J mzintrons
 #BSUB -o logs/snakemake_%J.out
 #BSUB -e logs/snakemake_%J.err
 #BSUB -R "select[mem>4] rusage[mem=4] " 
 #BSUB -q rna
 
+mkdir -p logs
+
 set -o nounset -o pipefail -o errexit -x
 
-args=' -q rna -o {log}.out -e {log}.err -J {params.job_name} -R
-"{params.memory} span[hosts=1] " -n {threads}  ' 
+args=' -q rna 
+       -o {log}.out 
+       -e {log}.err 
+       -J {params.job_name} 
+       -R "{params.memory} span[hosts=1] " 
+       -n {threads}  ' 
     
-
 #### load necessary programs ####
 
 # If programs are not all in the path then modify code to load 
@@ -21,19 +25,13 @@ args=' -q rna -o {log}.out -e {log}.err -J {params.job_name} -R
 . /usr/share/Modules/init/bash
 module load modules modules-init modules-python
 
-module load ucsc/v308 
-module load fastqc/0.11.5
-module load samtools/1.5
+module load fastqc/0.11.7
+module load samtools/1.9 
 module load STAR/2.5.2a
+module load salmon/1.1.0
+module load R/4.0.3
 module load subread/1.6.2
-module load bowtie2/2.3.2
-module load homer/4.9
 
-# other programs (not in modules)
-# Salmon-0.8.2
-# FASTX toolkit 0.0.13
-# gffread
-#
 #### execute snakemake ####
 
 snakemake --drmaa "$args" \
@@ -41,6 +39,6 @@ snakemake --drmaa "$args" \
     --jobs 150 \
     --resources all_threads=150 \
     --latency-wait 50 \
+    --printshellcmds \
     --rerun-incomplete  \
-    --configfile config.yaml \
-    --until make_bigwigs
+    --configfile config-drosophila.yaml

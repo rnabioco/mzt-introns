@@ -1,0 +1,61 @@
+# config for pre-mRNA quantification snakemake pipeline #
+
+
+# directory with fastqs and generated data
+DATA: 
+    "../data-rerun"
+
+# directory for auxillary scripts
+SRC: 
+  "../src" 
+
+# directory for R scripts
+RSRC:
+  "../R"
+
+  # directory for databases
+DBASES: 
+    "../dbases-rerun" 
+
+GENOMES:
+    chicken: "/beevol/home/riemondy/Projects/shared_dbases/genomes/chicken/gallus_gallus_5/Gallus_gallus.Gallus_gallus-5.0.dna.toplevel.fa"
+
+TRANSCRIPTS:
+    chicken: "/beevol/home/riemondy/Projects/shared_dbases/annotation/chicken/gallus_gallus_5/Gallus_gallus.Gallus_gallus-5.0.94.gtf"
+
+INTRONS:
+    chicken: "/beevol/home/riemondy/Projects/mzt-introns/dbases/chicken/saf/chicken_introns.saf"
+
+EXONS:
+    chicken: "/beevol/home/riemondy/Projects/mzt-introns/dbases/chicken/saf/chicken_exons.saf"
+
+CHROM_SIZES:
+    chicken: "/beevol/home/riemondy/Projects/shared_dbases/genomes/chicken/gallus_gallus_5/Gallus_gallus.Gallus_gallus-5.0.dna.toplevel.fa.fai"
+
+GENOME_DIRS:
+    chicken: "/beevol/home/riemondy/Projects/shared_dbases/star/chicken/gallus_gallus_5"
+
+SALMON_K:
+    chicken: 31
+
+HWANG:
+    trim: " -q 10 -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGTAGATCTCGGTGGTCGCCGTATCATT  "
+    intron_count: " --minOverlap 5 -s 2 -p "
+    exon_count: " --fracOverlap 1 -s 2 -p "
+    map: " --libType 'A' "
+    idx: " -k 31 "
+    stranded: "reverse"
+    bt_map: " --nofw "
+    fq: 
+        - "_1.fastq.gz"
+        - "_2.fastq.gz"
+
+T0_SAMPLES:
+    - "SRR4204939"
+    - "SRR4204940"
+    - "SRR4204941"
+
+T0_EXPT: "HWANG"
+
+LIB_PARAMS: "chicken_lib_params.tsv"
+

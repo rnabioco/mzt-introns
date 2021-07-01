@@ -87,7 +87,7 @@ rule mask_fa:
       outdir = os.path.join(DBASES, "{species}"),
       memory = "select[mem>24] rusage[mem=24]",
     log:
-      os.path.join(DBASES, "{species}", "eisa", "logs", "mask.txt")
+      os.path.join(DBASES, "{species}", "eisa", "logs", "mask_fasta.txt")
     message:
       "generating eisa reference with intron coverage masked "
     threads: 8
@@ -96,6 +96,6 @@ rule mask_fa:
       """
       bash {SRC}/mask_filter_fa.sh \
               {params.outdir}/eisa.fa \
-              {output.bed} \
+              {input.bed} \
               {params.outdir}/intron_mask/eisa_unique_transcripts.tsv
       """

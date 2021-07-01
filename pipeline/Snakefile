@@ -8,12 +8,11 @@ import itertools
 """ Snakemake pipeline for primary expression quanitification """ 
 
 configfile: "config.yaml"
-  
+
 DATA = config["DATA"]
 SRC = config["SRC"]
 RSRC = config["RSRC"]
 DBASES = config["DBASES"]
-SPLICE_JUNCTS = config["SPLICE_JUNCTS"]
 
 # The following are all dictionaries that are accessed using functions in 
 # the snakemake rules
@@ -27,23 +26,12 @@ INTRONS = config["INTRONS"]
 EXONS = config["EXONS"]
 
 
-# find all splice junction files (no error if none)
-# if no splice junctions have been generated, then run pipeline through
-# star mapping. Then rerun with the produced splice junctions
-
-SPLICE_JUNCTS = config["SPLICE_JUNCTS"]
-if SPLICE_JUNCTS: 
-  # make a string with filenames seperated by whitespace
-  SPLICE_JUNCTS = glob(SPLICE_JUNCTS)
-  SPLICE_JUNCTS = " ".join(SPLICE_JUNCTS)
-
-
 LIB_MAP = {}
 EXPTS = []
-SPECIES = []
+SPECIES = [] 
 SAMPLES = []
 
-with open('lib_params.tsv', 'r') as f:
+with open(config["LIB_PARAMS"], 'r') as f:
     hdr = f.readline()
     for line in f:
         if line.startswith("#"): continue
@@ -58,28 +46,36 @@ print("processing the following libraries")
                                                               SPECIES[i],
                                                               LIB_MAP[x])) for i, x in enumerate(SAMPLES)]
 
-SPECIES = "drosophila"
+SPECIES = list(set(SPECIES))[0]
 FASTA_TYPE = "eisa"
 MSKED_FASTA = "eisa_masked"
-T0_SAMPLES = ["SRR5469986", "SRR5469998"]
+
+T0_EXPT = config["T0_EXPT"]
+T0_SAMPLES = config["T0_SAMPLES"]
 
 rule all:
   input: 
     path.join(DBASES, SPECIES, "eisa.fa"),
     path.join(DBASES, SPECIES, "eisa", "eisaR.gtf"),
     path.join(DBASES, SPECIES, "bt2", FASTA_TYPE + ".1.bt2"),
+    
+    expand(path.join(DATA, 
+                     "fastq", 
+                     "trimmed", 
+                     SPECIES, 
+                     "{expt}",
+                     "{sample}_trimmed.fastq.gz"),
+           zip,
+           sample = SAMPLES,
+           expt = len(SAMPLES) * EXPTS),
 
-    expand(path.join(DATA, "bt2", SPECIES, "{expt}", FASTA_TYPE, "{sample}.bam"),
-      zip,
-      sample = SAMPLES, 
-      expt = len(SAMPLES) * EXPTS),
+    expand(path.join(DATA, "bt2", SPECIES, T0_EXPT, FASTA_TYPE, "{sample}.bam"),
+      sample = T0_SAMPLES), 
     
-    expand(path.join(DATA, "bigwigs", SPECIES, "bt2", FASTA_TYPE, "{expt}", "{sample}_{orient}.bw"),
-      zip,
-      sample = SAMPLES,
-      expt = len(SAMPLES) * EXPTS,
-      orient = len(SAMPLES) * ["fwd", "rev"]),
-    
+    expand(path.join(DATA, "bigwigs", SPECIES, "bt2", FASTA_TYPE, T0_EXPT, "{sample}_{orient}.bw"),
+       sample = T0_SAMPLES,
+       orient = len(T0_SAMPLES) * ["fwd", "rev"]),
+     
     #intron mask file
     path.join(DBASES, SPECIES, "bt2", MSKED_FASTA + ".1.bt2"),
     
@@ -92,12 +88,35 @@ rule all:
         MSKED_FASTA, "{sample}", "quant.sf"),
            zip, 
            sample = SAMPLES, 
-           expt = len(SAMPLES) * EXPTS) 
+           expt = len(SAMPLES) * EXPTS), 
+    
+    # Also generate bigwigs from genome alignment 
+    expand(path.join(DATA,
+                     "bigwigs",
+                     SPECIES,
+                     "star",
+                     "{expt}",
+                     "{sample}_{orient}.bw"),
+       zip,
+       sample = SAMPLES,
+       expt = (len(SAMPLES) + 2) * EXPTS,
+       orient = (len(SAMPLES) + 2) * ["fwd", "rev"]),
+
+    expand(path.join(DATA,
+                     "featurecounts",
+                     SPECIES,
+                     "{expt}",
+                     "{sample}_{feature}_counts.tsv"),
+       zip,
+       sample = SAMPLES,
+       expt = (len(SAMPLES) + 2) * EXPTS,
+       feature = (len(SAMPLES) + 2) * ["intron", "exon"]),
 
 include: "rules/qc.snake"    
 include: "rules/cutadapt.snake"
-include: "rules/primary_expression.snake"
 include: "rules/star.snake"
 include: "rules/make_bigwigs.snake"
 include: "rules/bowtie2.snake"
 include: "rules/eisa.snake"
+include: "rules/featurecounts.snake"
+
