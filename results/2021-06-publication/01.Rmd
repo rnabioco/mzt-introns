@@ -18,7 +18,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r, message = FALSE, warning = FALSE, include = FALSE}
 source(here::here("R/globals.r"))
 library(doParallel)
-fig_dir <- "1_figs"
+fig_dir <- "figs"
 dir.create(fig_dir, recursive = TRUE)
 ```
 
@@ -33,38 +33,6 @@ generate_splice_regions <- function(genome_file, gtf_file){
   genome <- read_tsv(genome_file, 
                      col_types = c("ci---"), 
                      col_names = c("chrom", "size"))
-  
-  #gtf <- read_tsv(gtf_file,
-  #                comment = "#", col_names = F, 
-  #                col_types = "ccciicccc")
-  #names(gtf) <- c("chrom",
-  #                "source",
-  #                "feature",
-  #                "start",
-  #                "end",
-  #                "none",
-  #                "strand",
-  #                "frame",
-  #                "attributes")
-  #
-  #gene_ids <- gtf$attributes %>% 
-  #  str_split(";") %>% 
-  #  map(., ~str_subset(.x, "gene_id")) %>% 
-  #  unlist() 
-  #
-  #gtf$gene_ids <- gene_ids
-  #
-  ## convert to bed, keep gene_id and score
-  #bed <- gtf %>% 
-  #  filter(feature == "exon") %>% 
-  #  mutate(start = start - 1,
-  #         gene_id = str_match(gene_ids, 
-  #                             'gene_id \\\"([^\\\\]+)\\\"') %>%
-  #           .[, 2],
-  #         score = str_match(attributes, 'exon_number \\\"([^\"]+)\\\";') %>% 
-  #           .[, 2],
-  #         score = as.numeric(score)) %>%  
-  #  dplyr::select(chrom, start, end, gene_id, score, strand)
   
    bed <- tidy_gtf(gtf_file) %>% 
      filter(type == "exon") %>% 
@@ -143,16 +111,74 @@ generate_splice_regions <- function(genome_file, gtf_file){
 splice_regions <- generate_splice_regions(annots$drosophila$chroms,
                                           annots$drosophila$gtf)
 
+gtf_dat <- tidy_gtf(annots$drosophila$gtf)
 
-gtf_dat <- tidy_gtf(gtf_file)
+```
 
-expr_genes <- read_excel("../../docs/bartel_2019_s1.xlsx", skip = 2) %>% 
+## Get public gene sets 
+
+```{r}
+# derenzis genes
+renzis_zyg_genes <- read_delim(file.path(project_dir, "docs",
+                                   "renzis_all_zygotic.txt"),
+                           delim = " ", 
+                           col_names = FALSE)
+
+renzis_early_genes <- read_delim(file.path(project_dir, "docs",
+                                   "renzis_early_zygotic.txt"),
+                           delim = " ", col_names = FALSE, skip = 1)
+
+renzis_mzt_genes <- read_delim(file.path(project_dir, "docs",
+                                   "renzis_mzt.txt"),
+                           delim = " ", col_names = FALSE, skip = 1)
+
+
+# eisen genes
+
+if(!file.exists(file.path(project_dir, 
+                        "docs", 
+                        "eisen_data.tsv"))) {
+  download.file("https://ndownloader.figshare.com/files/400050",
+                file.path(project_dir, 
+                          "docs", 
+                          "eisen_data.tsv"))
+}
+
+edata <- read_tsv(file.path(project_dir, 
+                        "docs", 
+                        "eisen_data.tsv"))
+
+genename2id <- filter(gtf_dat, type == "gene") %>% 
+  dplyr::select(gene_name, gene_id) %>% 
+  unique()
+edata_genes <- dplyr::select(edata, NAME, CLASS) %>% 
+  left_join(genename2id, by = c("NAME" = "gene_name")) %>% 
+  na.omit() %>% 
+  split(., .$CLASS)
+
+bartel_zyg <- expr_genes <- read_excel("../../docs/bartel_2019_s1.xlsx", skip = 2) %>% 
   left_join(gtf_dat, by = c("GENES" = "gene_name")) %>% 
   pull(gene_id) %>% 
   unique()
 
-splice_windows <- map(splice_regions, 
-                      ~filter(.x, gene_id %in% expr_genes))
+public_gene_sets <- list(
+  derenzis_early_zygotic = renzis_early_genes$X2,
+  derenzis_pure_zygotic = renzis_zyg_genes$X2,
+  derenzis_mat_zygotic = renzis_mzt_genes$X2,
+  derenzis_any_zygotic = union(renzis_zyg_genes$X2,
+                                   renzis_mzt_genes$X2),
+  eisen_pure_zygotic = edata_genes$zyg$gene_id,
+  eisen_mat_zygotic = edata_genes$matzyg$gene_id,
+  eisen_any_zygotic = union(edata_genes$zyg$gene_id, 
+                                edata_genes$matzyg$gene_id),
+  eisen_pure_mat = edata_genes$mat$gene_id,
+  bartel_zyg = bartel_zyg
+) %>% 
+  map(na.omit)
+```
+
+```{r}
+map(public_gene_sets, ~length(unique(.x)))
 ```
 
 ## generate coverage summaries
@@ -222,8 +248,7 @@ mdata
 ```
 
 
-```{r dropsophila_windows}
-
+```{r drosophila_windows}
 compute_coverage <- function(bw, splice_windows_list){
 
   splice_windows <- map(splice_windows_list, ~group_by(.x, strand))
@@ -243,9 +268,10 @@ compute_coverage <- function(bw, splice_windows_list){
   res 
 }
 
-bws <- dir(file.path(data_dir,
+bws <- dir(file.path(here("data-rerun"),
                      "bigwigs",
-                     "drosophila"), 
+                     "drosophila",
+                     "star"), 
            full.names = TRUE,
            pattern = ".bw",
            recursive = T)
@@ -273,21 +299,29 @@ intron_metagene <- function(list_of_bws, splice_windows) {
   res
 }
 
-n <- 3
-registerDoParallel(n)
-ris <- foreach(i = bw_info,
-              .packages = c("valr", "tidyverse", "rtracklayer"),
-              .export = c("intron_metagene", 
-                          "read_bigwig",
-                          "splice_windows"))  %dopar% {
-  intron_metagene(i, splice_windows)
-              }
+# for some reason purrr::map would freeze if using foreach in map call. 
+all_res <- list()
+for (i in seq_along(public_gene_sets)){
+  message(names(public_gene_sets)[i])
+  splice_windows <- map(splice_regions, 
+                                            ~filter(.x, gene_id %in% public_gene_sets[[i]]))
+                      n <- 3
+                      registerDoParallel(n)
+                      all_res[[i]] <- foreach(i = bw_info,
+                                     .packages = c("valr", "tidyverse", "rtracklayer"),
+                                     .export = c("intron_metagene", 
+                                                 "read_bigwig",
+                                                 "splice_windows"))  %dopar% {
+                                                   intron_metagene(i, splice_windows)
+                                                 }
+}
+names(all_res) <- names(public_gene_sets)
+
 ```
 
 
 ## Plot coverage
 ```{r plot}
-
 dev_stages_ordered <- c(
   "Stage 11 oocyte",
   "Stage 12 oocyte",
@@ -301,54 +335,59 @@ dev_stages_ordered <- c(
   "4-5 hr embryo",
   "5-6 hr embryo")
 
-res <- ris
 sras <- basename(names(bw_info)) %>% str_remove("_fwd.bw") 
 
 # scale everything to 1
+all_plts <- map(all_res, function(res){
+  plot_ids <- left_join(tibble(Run = sras), 
+                        mdata,
+                        by = "Run") %>% 
+    mutate(id = paste(study, developmental_stage, strain, sep = "_")) %>% 
+    pull(id)
+  
+  names(res) <- plot_ids
+  res <- bind_rows(res, .id = "id")
+  res <- res %>% 
+    tidyr::separate(id, c("study", "stage", "genotype"), sep = "_") %>% 
+    group_by(study, stage, type, .win_id) %>% 
+    summarize(total_signal = sum(total_signal)) %>% 
+    group_by(study, type, stage) %>% 
+    mutate(prop_of_max = total_signal / max(total_signal)) %>% 
+    ungroup() %>% 
+    mutate(stage = factor(stage, levels = dev_stages_ordered))
+  
+  
+  new_facet_names <- c(
+    `1` = "5p-Splice-Site",
+    `2` = "3p-Splice-Site"
+  )
+  
+  x_labels <- seq(-50, 50, by = 25)
+  x_breaks <- seq(1, 101, by = 25)
+  
+  plts <- map(unique(res$study),
+              ~ggplot(dplyr::filter(res, study == .x),
+                      aes(.win_id, prop_of_max)) + 
+                geom_line(aes(colour = stage), size = 0.75, alpha = 0.75) + 
+                facet_grid(~type, labeller = as_labeller(new_facet_names)) +
+                scale_colour_viridis(discrete = TRUE,
+                                     name = "") + 
+                scale_x_continuous(labels = x_labels, breaks = x_breaks) +
+                labs(y = "Proportion of maximum signal",
+                     x = "Nucleotides from the splice site"))
+  
+  names(plts) <- unique(res$study)
+  plts
+})
 
-plot_ids <- left_join(tibble(Run = sras), 
-                      mdata,
-          by = "Run") %>% 
-  mutate(id = paste(study, developmental_stage, strain, sep = "_")) %>% 
-  pull(id)
-
-names(res) <- plot_ids
-res <- bind_rows(res, .id = "id")
-res <- res %>% 
-  tidyr::separate(id, c("study", "stage", "genotype"), sep = "_") %>% 
-  group_by(study, stage, type, .win_id) %>% 
-  summarize(total_signal = sum(total_signal)) %>% 
-  group_by(study, type, stage) %>% 
-  mutate(prop_of_max = total_signal / max(total_signal)) %>% 
-  ungroup() %>% 
-  mutate(stage = factor(stage, levels = dev_stages_ordered))
-
-
-new_facet_names <- c(
-  `1` = "5p-Splice-Site",
-  `2` = "3p-Splice-Site"
-)
-
-x_labels <- seq(-50, 50, by = 25)
-x_breaks <- seq(1, 101, by = 25)
-
-plts <- map(unique(res$study),
-   ~ggplot(dplyr::filter(res, study == .x),
-       aes(.win_id, prop_of_max)) + 
-    geom_line(aes(colour = stage), size = 0.75, alpha = 0.75) + 
-    facet_grid(~type, labeller = as_labeller(new_facet_names)) +
-    scale_colour_viridis(discrete = TRUE,
-                       name = "") + 
-    scale_x_continuous(labels = x_labels, breaks = x_breaks) +
-    labs(y = "Proportion of maximum signal",
-         x = "Nucleotides from the splice site"))
-
-names(plts) <- unique(res$study)
-
-imap(plts, ~save_plot(file.path(fig_dir, 
-                                paste0("intron_metagene_", .y, ".pdf")), 
-                      .x, base_width = 6.5))
-
-write_tsv(res, "drosophila_zf_plotting_dat.tsv")
+dir.create(file.path(fig_dir, "intron_metagenes"))
+imap(all_plts,
+     function(plts, study){
+       imap(plts, function(x, y){
+       save_plot(file.path(fig_dir, "intron_metagenes", 
+                                str_c("genes_from_", study,"_", y, ".pdf")), 
+                      x, base_width = 6.5)})
+       })
+all_plts
+saveRDS(all_res, file.path(fig_dir, "intron_metagenes","drosophila_plotting_dat.rds"))
 ```
-

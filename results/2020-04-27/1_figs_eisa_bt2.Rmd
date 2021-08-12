@@ -76,10 +76,8 @@ mdata1 <- dplyr::filter(mdata1,
   dplyr::rename(strain_s = genotype_s)
 
 
-#mdata <- list(mdata1, mdata2)
-#names(mdata) <- c("EICHHORN", "RISSLAND")
-mdata <- list(mdata2)
-names(mdata) <- c("RISSLAND")
+mdata <- list(mdata1, mdata2)
+names(mdata) <- c("EICHHORN", "RISSLAND")
 
 mdata <- bind_rows(mdata, .id = "study")
 #cleanup names

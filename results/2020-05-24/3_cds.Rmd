@@ -89,8 +89,6 @@ read_bw <- function(bw_fn,
 bw_fns <- dir("../../data/bigwigs/drosophila/EICHHORN/", 
               pattern = "fwd.bw", 
               full.names = TRUE)
-a <- read_bw(bw_fns[1], region = c("2R", 1e6, 2e6))
-
 ```
 
 
@@ -244,6 +242,11 @@ save_plot(file.path(fig_dir, "riboprofiling_coverage.pdf"),
           base_asp = 1.7)
 ```
 
+The stage 14 and activated egg RPF data was previoulsy published and reanalyzed by Eichhorn et al. These samples did not have cycloheximide. 
+>
+Kronja I, Yuan B, Eichhorn SW, Dzeyk K, Krijgsveld J, Bartel DP, Orr-Weaver TL. Widespread changes in the posttranscriptional landscape at the Drosophila oocyte-to-embryo transition. Cell Reports. 2014;7:1495–1508. doi: 10.1016/j.celrep.2014.05.002. 
+>
+
 ```{r}
 cap_infinite_vals <- function(x) {
   min_val <- min(x[is.finite(x)], na.rm = TRUE)
@@ -262,7 +265,8 @@ ribo_fc_summary <- ribo_summary %>%
   #filter(class == "Zygotic exons") %>% 
   group_by(class, transcript_id, source_renamed) %>% 
   summarize(total_coverage = sum(mean_coverage)) %>% 
-  filter(source_renamed != "Activated_egg") %>% 
+  filter(!source_renamed %in% c("Activated_egg",
+                                "Stage_14")) %>% 
   mutate(mzt_tpt = ifelse(source_renamed %in% c("3-4 hr","5-6 hr"),
                           "rpfs-post-major-mzt",
                           "rpfs-pre-major-mzt")) %>% 

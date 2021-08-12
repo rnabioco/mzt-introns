@@ -358,13 +358,14 @@ get_bw <- function(bw_fn,
                  stdout = TRUE)
   
   if(length(dat) > 0)
-    res <- read_tsv(
-      dat,
-      col_names = c("contig",
+    res <- str_c(dat, collapse = "\n") %>% 
+             read_tsv(.,
+                      col_names = c("contig",
                     "start",
                     "end",
-                    "coverage")
-    ) else{
+                    "coverage"),
+                    col_types = 'cddd')
+  else{
       res <- tibble(contig = character(), 
                     start = numeric(), 
                     end = numeric(),
@@ -435,7 +436,8 @@ plot_tx_coverage <- function(bw_fns,
                               name =  as.character(y),
                               chromosome = chrom, 
                               genome = gnome,
-                              col.line = z,
+                              col.histogram = z,
+                              fill.histogram = z,
                               ylim = y_limits
                     )})
   
@@ -454,12 +456,12 @@ plot_tx_coverage <- function(bw_fns,
              chromosome = chrom,
              from = start,
              to = end,
-             type = "S",
+             type = "hist",
              reverseStrand = strand == "-", 
              col.title = "black",
              col.axis = "black",
              background.title ="transparent",
-             lwd = 1.0, 
+          #   lwd = .5, 
              innerMargin = 10,
              margin = 50,
              main = annotation_label,

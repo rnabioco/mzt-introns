@@ -41,10 +41,40 @@ ggplot2::theme_set(theme_cowplot())
 
 #### Annotations ####
 
+genome_dir <- "~/Projects/shared_dbases/genomes"
+annot_dir <- "~/Projects/shared_dbases/annotation"
+
 annots <- list(
   drosophila = list(
-    gtf  = "~/Projects/shared_dbases/annotation/drosophila/Drosophila_melanogaster.BDGP6.84.gtf",
-    genome = "~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa",
-    chroms = "~/Projects/shared_dbases/genomes/drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
+    gtf  = "drosophila/Drosophila_melanogaster.BDGP6.84.gtf",
+    genome = "drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa",
+    chroms = "drosophila/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
+  ),
+  zebrafish = list(
+    gtf = "zebrafish/danRer10/danRer10.gtf",
+    genome = "zebrafish/danRer10/danRer10.fa",
+    chroms = "zebrafish/danRer10/danRer10.fa.fai"
+  ),
+  chicken = list(
+    gtf = "chicken/gallus_gallus_5/Gallus_gallus.Gallus_gallus-5.0.94.gtf",
+    genome = "chicken/gallus_gallus_5/Gallus_gallus.Gallus_gallus-5.0.dna.toplevel.fa",
+    chroms = "chicken/gallus_gallus_5/Gallus_gallus.Gallus_gallus-5.0.dna.toplevel.fa.fai"
+  ),
+  xenopus_t = list(
+    gtf = "xenopus/jgi_xentrop9.1/xenTro9.gtf",
+    genome = "xenopus/jgi_xentrop9.1/xenTro9.fa",
+    chroms = "xenopus/jgi_xentrop9.1/xenTro9.fa.fai"
+  ),
+  mouse = list(
+    gtf = "mouse/gencode.vM15.primary_assembly.annotation.gtf",
+    genome = "mouse/GRCm38.primary_assembly.genome.fa",
+    chroms = "mouse/GRCm38.primary_assembly.genome.fa.fai"
   )
 )
+
+annots <- map(annots,
+              ~{.x$gtf <- file.path(annot_dir, .x$gtf)
+              .x$genome <- file.path(genome_dir, .x$genome)
+              .x$chroms <- file.path(genome_dir, .x$chroms)
+              .x})
+
