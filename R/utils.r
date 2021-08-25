@@ -440,13 +440,16 @@ plot_tx_coverage <- function(bw_fns,
                               fill.histogram = z,
                               ylim = y_limits
                     )})
-  
-  grtrack <- GeneRegionTrack(gfeatures,
+  grange_feat <- gtf_obj[gtf_obj$transcript_id %in% transcripts]
+  txDb_feats <- suppressWarnings(makeTxDbFromGRanges(grange_feat))
+  grtrack <- GeneRegionTrack(txDb_feats,
                              genome = gnome, 
                              chromosome=chrom, 
                              name="",
                           #   stacking = "dense",
-                             col.title = "black")
+                             col.title = "black",
+                          lwd=0.5)
+  # feature(grtrack) <- c("maternal", "zygotic")[match(identifier(grtrack), features)]
   options(scipen=16)
   if(is.null(annotation_label)){
     annotation_label <- unique(gfeatures$symbol)[1]
@@ -516,6 +519,73 @@ count_seq_matches <- function(seq, q_str, rev_comp = FALSE){
 }
 
 
+
+# calculate effective lengths for TPM measurements using kallisto algorithm
+# salmon uses the same approach 
+# rewritten in R based on kallisto c++ code
+k_trunc_guassian_fld <- function(start, stop, mean_val, sd_val) {
+  
+  n = stop - start;
+  mean_fl = vector("double", n);
+  
+  total_mass = 0.0
+  total_density = 0.0
+  
+  lens <- 1:stop
+  
+  # z-scores 
+  x <- (lens - mean_val) / sd_val
+  
+  # density 
+  cur_density = exp(- 0.5 * x * x) / sd_val
+  
+  cumulative_den = cumsum(cur_density)
+  cumultative_mass = cumsum(cur_density * lens)
+  
+  is_valid <- cumultative_mass > 0
+  mean_fl[is_valid] <- cumultative_mass[is_valid] / cumulative_den[is_valid]
+  
+  names(mean_fl) <- lens
+  mean_fl
+}
+
+k_get_frag_len_means <- function(tx_lens, frag_dis, max_frag_len = 800) {
+  # use mean provided if larger than max frag length
+  marginal_mean <- frag_dis[length(frag_dis)]
+  tx_eff_len_means <- ifelse(tx_lens >= max_frag_len,
+                             marginal_mean,
+                             frag_dis[tx_lens])
+  tx_eff_len_means
+}
+
+
+get_effective_lengths <- function(tx_lens, 
+                                  mean_frag_len,
+                                  sd_frag_len, 
+                                  max_fragment_len = 800) {
+  
+  fld <- k_trunc_guassian_fld(0, max_fragment_len, mean_frag_len, sd_frag_len)
+  tx_eff_lens_mean <- k_get_frag_len_means(tx_lens, fld )
+  
+  tx_eff_lens <- tx_lens - tx_eff_lens_mean + 1
+  too_short <- tx_eff_lens < 1
+  tx_eff_lens[too_short] <- tx_lens[too_short]
+  
+  tx_eff_lens
+}
+
+# example usage
+# tx_lens <- sample(1:10000, 50000, replace = TRUE)
+# 
+# fld_mean <- 200
+# fld_sd <- 20
+# 
+# get_effective_lengths(tx_lens, 
+#                       fld_mean,
+#                       fld_sd) %>% 
+#   data.frame(tx_lens, .) %>% 
+#   arrange(tx_lens) %>% 
+#   View()
 
 
 

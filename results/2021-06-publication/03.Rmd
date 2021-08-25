@@ -273,8 +273,6 @@ switching_iso <- filter(switching_iso,
 zyg_tx <- filter(switching_iso, zygotic_max)
 mat_tx <- filter(switching_iso, maternal_max)
 
-# ... comp two classes
-
 plt_dat <- bind_rows(list("zygotic"  = zyg_tx,
                           "maternal" = mat_tx), 
                      .id = "tx_class")
@@ -308,15 +306,60 @@ save_plot(file.path(fig_dir, "tx_m_vs_z_expression.pdf"), p, base_asp = 1.2)
 
 ```
 
+Need to filter isoforms for a minimal TPM values (i.e maternal and zygotic isoforms must be > 1 TPM ) Assume that the maternal -> maternal and zygotic -> zygotic are due to changes in proportions between low abundance isoforms. 
+
 ```{r}
-plt_dat <- group_by(gene_classes, mzt_class) %>% 
-  mutate(n_genes = n()) %>% 
-  ungroup() %>% 
+all_tx_data <- left_join(gene_classes,
+                      dxr_tidy, 
+            by = c("gene_id" = "groupID")) %>% 
   filter(qval < 0.05) %>% 
+  group_by(gene_id) %>% 
+  mutate(maternal_max = maternal == max(maternal),  
+         up = log2fold_zygotic_maternal > 0) 
+
+# find maximally upregulated transcript post-mzt
+all_switch_tx <- filter(all_tx_data,
+                     qval < 0.05,
+                     padj < 0.05,
+                     !maternal_max) %>% 
+  group_by(gene_id) %>% 
+  mutate(zygotic_max = zygotic == max(zygotic)) %>% 
+  filter(zygotic_max) %>% 
+  pull(featureID)
+
+all_tx_data <- all_tx_data %>% 
+  mutate(zygotic_max = featureID %in% all_switch_tx) %>% 
+  ungroup()
+
+all_tx_data <- filter(all_tx_data, 
+       maternal_max | (zygotic_max & up)) %>% 
+  group_by(gene_id) %>% 
+  mutate(n_tx = n()) %>% 
+  filter(n_tx == 2) %>% 
+  dplyr::select(-n_tx)
+
+all_zyg_pass_filter <- filter(all_tx_data, 
+                          prop_tx_zygotic >= 0.10) %>% 
+  pull(gene_id) %>% 
+  unique()
+
+all_tx_data <- filter(all_tx_data, 
+                        gene_id %in% all_zyg_pass_filter)
+
+```
+
+```{r}
+plt_dat <- all_tx_data %>% 
+  ungroup() %>% 
+  select(mzt_class, gene_name) %>% 
+  distinct() %>% 
+  mutate(n_genes = length(unique(gene_name))) %>% 
+  ungroup() %>% 
   group_by(mzt_class) %>% 
   summarize(`# of genes with switching isoforms` = n(), 
-            `Total # of genes` = unique(n_genes),
-            `Percent of genes with switching isoforms` = 100 * `# of genes with switching isoforms` / `Total # of genes`)
+            `Total # of genes` = n_genes,
+            `Percent of genes with switching isoforms` = 100 * `# of genes with switching isoforms` / `Total # of genes`) %>% 
+  distinct()
   
 pretty_labels <- c(
   "pure_maternal" = "Maternal",
@@ -498,7 +541,8 @@ plt_dat %>%
 ```
 
 
-# CDS analysis
+# Isoform analysis
+
 1) Rank genes by q-val
 2) have two rows per gene for maternal and zyg
 
@@ -591,7 +635,7 @@ plot(fit,
 ```
 
 
-## Mass spec data
+## Examine mass spec data
 
 ```{r}
 changed_cds <- filter(mz_annots, !same_CDS)
@@ -647,39 +691,75 @@ peps <- read.table(file.path(docs_dir, "DeJung.2018.2.9.peptides_timecourse.txt.
                    sep = " ",
                    stringsAsFactors = FALSE) 
 
-peps <- dplyr::select(peps, Sequence, 
+tid2genename <- gtf %>% 
+  filter(type == "transcript") %>% 
+  dplyr::select(transcript_id, gene_name) %>% 
+  tbl_df() %>% 
+  unique()
+
+peps_out <- left_join(peps, tid2genename, by = c("Leading.razor.protein" = "transcript_id")) %>% 
+  select(Sequence:Leading.razor.protein, leading_gene_name = gene_name, everything())
+
+write_lines(c("# from http://flybase.org/reports/FBrf0241309.html", 
+              "# added gene names to table"),
+            file.path(out_dir,
+                      "Casas-Vila_et_al_2017_mass_spec_data.csv"))
+write_csv(peps_out, append = TRUE,
+          file.path(out_dir, "Casas-Vila_et_al_2017_mass_spec_data.csv"))
+```
+
+```{r}
+peps <- dplyr::select(peps, Sequence, Proteins,
                 Leading.razor.protein, 
                 Intensity.00h_1:Intensity.06h_4) %>% 
-   gather(intensity, value, -Sequence, -Leading.razor.protein) %>% 
+   gather(intensity, value, -Sequence, -Leading.razor.protein, -Proteins) %>% 
    mutate(intensity = str_remove(intensity, fixed("Intensity."))) %>%
    separate(intensity, c("timepoint", "rep"), sep = "_") %>% 
-   group_by(Sequence, Leading.razor.protein, timepoint) %>% 
+   group_by(Sequence, Proteins, Leading.razor.protein, timepoint) %>% 
    summarize(intensity = mean(value)) %>%
    spread(timepoint, intensity) %>%
    ungroup() 
  
-peps$total_expr <- rowSums(peps[, 3:9])
+peps$total_expr <- rowSums(peps[, 4:10])
 
 peps <- filter(peps, total_expr > 0)
 
-a <- colnames(as.matrix(peps[, 3:9]))
-peps$max_timepoint <- apply(as.matrix(peps[, 3:9]), 
+a <- colnames(as.matrix(peps[, 4:10]))
+peps$max_timepoint <- apply(as.matrix(peps[, 4:10]), 
                             MARGIN = 1, 
                             function(x) a[which(x == max(x))])
 
 matched_peps <- map(split(seq_diffs_zygotic, 1:nrow(seq_diffs_zygotic)), 
-    ~peps[str_which(.x$new_aa, peps$Sequence), 
-          "Leading.razor.protein",
-          drop = TRUE] %>% 
-      unique())
-
+    ~{
+      if(.x$new_aa == ""){
+        res <- NA
+      } else {
+        res <- peps[str_which(.x$new_aa, peps$Sequence), 
+                    "Proteins",
+                    drop = TRUE] %>%
+          unique() %>% 
+          str_split(";") %>% 
+          unlist() %>%
+          unique()
+      }
+      res
+      })
 
 names(matched_peps) <- seq_diffs_zygotic$gene_id
 
 summary_matched_peps <- matched_peps %>%
-  map_dfr(~tibble(pep_tx = list(if(length(.x) == 0) NA else .x)),  
+  map_dfr(~{
+    if(length(.x) == 0){
+      res <- "no match"
+    } else if (any(is.na(.x))) {
+      res <- NA
+    } else {
+      res <- str_c(.x, collapse = ",")
+    }
+    tibble(pep_tx = res) 
+  },
           .id = "gene_id") %>% 
-  unnest()
+  unnest(cols = c())
 
 summary_matched_peps <- left_join(summary_matched_peps, gene2symbol)
 
@@ -694,16 +774,17 @@ n_peps_with_evidence <- additional_annots %>%
   filter(tx_class == "zygotic",
          !same_CDS,
          !is.na(seq)) %>% 
-  filter(!is.na(pep_tx)) %>% 
+  filter(pep_tx != "no match", !is.na(pep_tx)) %>% 
   nrow()
 
-n_cds_changes <- additional_annots %>% 
+n_quantifiable_cds_changes <- additional_annots %>% 
   filter(tx_class == "zygotic",
          !same_CDS,
-         !is.na(seq)) %>% 
+         !is.na(seq),
+         !is.na(pep_tx)) %>% 
   nrow()
 
-n_peps_with_evidence / n_cds_changes
+n_peps_with_evidence / n_quantifiable_cds_changes
 
 ```
 
@@ -787,8 +868,31 @@ save_plot("../figures/pdfs/fig4/Go_term_enrichment_isoform_genes.pdf",
 
 write_tsv(res_out, file.path(tbl_dir, "go_terms_isoforms.tsv")) 
 
-openxlsx::write.xlsx(res_out, file.path(tbl_dir,
+to_keep <- c("GO:BP",
+             "GO:CC",
+             "GO:MF",
+             "KEGG")
+
+res_out %>% 
+  filter(source %in% to_keep) %>% 
+  dplyr::select(source,
+                  term_name, term_id, 
+                  p_value, 
+                  gene_name) %>% 
+  mutate(source = str_replace_all(source, '[[:punct:]]+', " ")) %>% 
+  split(., .$source) %>% 
+  openxlsx::write.xlsx(., file.path(tbl_dir,
                      "go_terms_isoforms.xlsx"), overwrite = TRUE)
+
+res_out %>% 
+  filter(source %in% to_keep) %>% 
+  dplyr::select(source,
+                  term_name, term_id, 
+                  p_value, 
+                  gene_name) %>% 
+  mutate(source = str_replace_all(source, '[[:punct:]]+', " ")) %>% 
+  split(., .$source) %>% 
+openxlsx::write.xlsx(., "../tables/table_s3.xlsx", overwrite = TRUE)
 ```
 
 
@@ -819,7 +923,6 @@ ab_mat <- rowsum(ab, matched_tx_ids)
 
 weightedLength <- rowsum(ab * len, matched_tx_ids)
 length_mat <- weightedLength / ab_mat   
-
 aveLengthSamp <- rowMeans(len)
 aveLengthSampGene <- tapply(aveLengthSamp, matched_tx_ids, mean)
 
@@ -1005,6 +1108,7 @@ save_plot(file.path(fig_dir, "zyg_isoform_average_plot.pdf"),
 
 
 ## write out summaries
+
 ```{r}
 simple_annots <- dplyr::select(additional_annots, 
                         gene_id, 
@@ -1024,11 +1128,14 @@ simple_annots <- dplyr::select(additional_annots,
                         intron_log2fc,
                         log2_padj,
                         intron_sig
-                        )
+                        ) %>% 
+  ungroup() %>% 
+  distinct()
 
 cds_changed_annots <- filter(simple_annots, !same_CDS)
 
-cds_changed_annots <- set_xlsx_class(cds_changed_annots, "gene_name", "Text")
+cds_changed_annots <- set_xlsx_class(cds_changed_annots, 
+                                     "gene_name", "Text")
 
 
 ## all data summary
@@ -1052,15 +1159,15 @@ all_genes <- left_join(dxr.g,
 all_genes <- set_xlsx_class(all_genes, "gene_name", "Text")
 
 README_txt <- c(
-  "The file isoform_summary.xlsx contains information about
+  "This file contains information about
   genes with transcript usage changes during the MZT.",
   "Transcript usage differences were identifed with DEXseq using transcript level estimates from salmon using only mature mRNAs (no pre-mRNAs included)",
   "Genes with transcript usage differences were selected using a gene level p-value (< 0.05) for differential transcript usage (see DEXSeq::perGeneQValue).",
   "Representative Maternal and Zygotic transcripts were selected for each gene with evidence of differential transcript usage.",
   "Specifically, the most abundant transcript in the Maternal stages was selected as the Maternal dominant isoform.",
   "The dominant zygotic isoform was then selected as the most abundant transcript expressed in the zygotic stages that was not the previously assigned dominant maternal transcript.",
-  "Transcript were required to account for at least 20% of the isoforms expressed by a transcript.",
-  "For each gene I've included information about the dominant maternal and zygotic transcript on separate rows.",
+  "Transcript were required to account for at least 10% of the isoforms expressed by a transcript.",
+  "For each gene information is included about the dominant maternal and zygotic transcript on separate rows.",
   "",
   ""
 )
@@ -1069,7 +1176,7 @@ col_info <- c(
   "Column: Description",
   "gene_id: Flybase gene id",
   "gene_name: Flybase gene name",
-  "per_gene_qval: Per gene adjusted p-value, used to screen for genes with transcript-level changes",
+  "per_gene_qval: Per gene adjusted p-value, used to screen for genes with   isoform changes",
   "transcript_id: flybase transcript id",
   "transcript_type: One of Maternal or Zygotic (see above for definitions)",
   "strand: Transcribed strand",
@@ -1083,7 +1190,7 @@ col_info <- c(
   "three_prime_utr_length: length of 3'UTR (nt)",
   "CDS_length: length of CDS (nt)",
   "five_prime_utr_length: length of 5'UTR (nt)",
-  "intron_log2fc: As a separate test, all transcrtips (pre-mRNA and mRNA) were tested for differential expression. This is log2 fold change for the premRNA for a trnascript, if detected.",
+  "intron_log2fc: As a separate test, all transcrtips (pre-mRNA and mRNA) were tested for differential expression. This is log2 fold change for the premRNA for a transcript, if detected.",
   "log2_padj: adjusted p-value for above DE test",
   "intron_sig: boolean to indicate if the transcript intron levels are significantly increased"
 )
@@ -1098,380 +1205,14 @@ openxlsx::write.xlsx(list(README = README_txt,
                      file.path(out_dir,"isoform_summary.xlsx"),
                      overwrite = TRUE)
 
+openxlsx::write.xlsx(list(README = README_txt,
+                          isoforms_with_any_changes = simple_annots,
+                          isoforms_with_CDS_changes = cds_changed_annots,
+                          all_dexseq_data = all_data),
+                     "../tables/table_s2.xlsx",
+                     overwrite = TRUE)
+
 write_lines(README_txt, file.path(out_dir, "README.txt"))
-```
-
-## Representative transcripts
-
-Show coverage profiles from transcripts that swtich
-```{r, eval = TRUE}
-additional_annots <- read_tsv(file.path(out_dir, "all_isoform_annotations.tsv"))
-base_dir <- "~/Projects/mzt-introns/data-rerun/bigwigs/drosophila/star/RISSLAND"
-sras <- filter(mdata, strain == "w1118") %>% pull(Run)
-ids <- filter(mdata, strain == "w1118") %>% pull(developmental_stage)
-
-bws <- c("_fwd.bw", "_rev.bw")
-names(bws) <- c("+", "-")
-
-bw_fns <- map(bws, function(x) {
-  out <- file.path(base_dir, paste0(sras, x))
-  names(out) <- ids
-  out
-}) 
-
-
-gtf_obj <- import(annots$drosophila$gtf)
-
-tx_summary_plots <- function(bws, 
-                             gene,
-                             isoform_annotation_df,
-                             ...){
-  
-  to_plot <- filter(isoform_annotation_df, gene_name == gene)
-  strand <- unique(to_plot$strand)[1]
-
-  features <- unique(to_plot$featureID)
-  plot_tx_coverage(bw_fns[[strand]], 
-                 features,
-                 gtf_obj,
-                 scale_y = FALSE,
-                 cex.main = 0.75,
-                 rotation.title=0,
-                 ...
-                 )
-}
-
-genes_to_plot <- c(
-  "PNUTS",
-  "cnn",
-  "Zn72D",
-  "numb",
-  "lig",
-  "Psa",
-  "Rb97D",
-  "pyd",
-  "CG8331",
-  "Pk92B",
-  "yata",
-  "hts",
-  "bl",
-  "eIF-2gamma",
-  "Npc1a",
-  "Su(var)2-10",
-  "toc",
-  "Hph",
-  "blot",
-  "Mhcl",
-  "SC35",
-  "CG4658",
-  "arm",
-  "Nmnat",
-  "Adar",
-  "Plip",
-  "Cdk2",
-  "CycE")
-
-tx_figs <- file.path(fig_dir, "tx_figs")
-dir.create(tx_figs, showWarnings = FALSE)
-
-walk(genes_to_plot,
-    ~{
-      pdf(file.path(tx_figs,
-                    str_c(.x, "_tx_coverage.pdf")),
-          width = 6,
-          height = 3)
-      if (!.x %in% additional_annots$gene_name){
-        message(.x, " not switching iso")
-        return(NULL)
-      }
-      tx_summary_plots(bw_fns, gene = .x, 
-                 isoform_annotation_df = additional_annots,
-                 title.width = 1.5,
-                 sizes = c(0.1, rep(0.25, 5)),
-                 fontsize = 8,
-                 cex.title = 1)
-      dev.off()
-    })
-
-tx_figs <- "../figures/pdfs/tx-coverage-plots/"
-dir.create(tx_figs, showWarnings = FALSE)
-
-walk(genes_to_plot,
-    ~{
-      pdf(file.path(tx_figs,
-                    str_c(.x, "_tx_coverage.pdf")),
-          width = 6,
-          height = 3)
-      if (!.x %in% additional_annots$gene_name){
-        message(.x, " not switching iso")
-        return(NULL)
-      }
-      tx_summary_plots(bw_fns, gene = .x, 
-                 isoform_annotation_df = additional_annots,
-                 title.width = 1.5,
-                 sizes = c(0.1, rep(0.25, 5)),
-                 fontsize = 8,
-                 cex.title = 1)
-      dev.off()
-    })
-
-```
-
-
-Include ribosome profiling and nanopore
-
-```{r}
-plot_tx_ribo_coverage <- function(rnafns, 
-                                  ribofns,
-                             transcripts,
-                             gtf_obj,
-                             scale_y = FALSE,
-                             gnome = "dm6",
-                             annotation_label = NULL,
-                             ...){
-  library(GenomicFeatures)
-  library(Gviz)
-  library(GenomicAlignments)
-  
-  options(ucscChromosomeNames=FALSE)
-
-  #subset gtf to get min max coords to plot
-  gfeatures <- gtf_to_gviz(gtf_obj, transcripts)
-  
-  chrom <- as.vector(unique(gfeatures$chromosome))[1]
-  start <- min(gfeatures$start)
-  end <- max(gfeatures$end)
-  strand <- as.vector(unique(gfeatures$strand))[1]
-  
-  # get rna coverage
-  rna_cov_list <- map(rnafns, 
-      ~get_bw(.x,
-             chrom = chrom,
-             start = start,
-             end = end) %>% 
-        makeGRangesFromDataFrame(., 
-                                 keep.extra.columns = TRUE,
-                                 seqnames.field = 'contig',
-                                 starts.in.df.are.0based = TRUE,
-                                 ignore.strand = TRUE))
-  
-  if(scale_y){
-    ymax <- map(rna_cov_list, ~.x$coverage) %>% unlist() %>% max()
-    y_limits <- c(0, ymax)
-  } else {
-    y_limits <- NULL
-  }
-  
-  rna_lib_names <- names(rnafns)
-  
-  if(is.null(rna_lib_names)){
-    rna_lib_names <- as.character(1:length(rnafns))
-  } 
-  names(rna_cov_list) <- rna_lib_names 
-  
-  rnatracks <- pmap(list(rna_cov_list,
-                       names(rna_cov_list),
-                       viridis(length(rna_cov_list))),
-                  function(x, y, z){
-                    DataTrack(range = x, 
-                              name =  as.character(y),
-                              chromosome = chrom, 
-                              genome = gnome,
-                              col.histogram = z,
-                              fill.histogram = z,
-                              ylim = y_limits
-                    )})
-  
-   # get ribo coverage
-  ribo_cov_list <- map(ribofns, 
-      ~get_bw(.x,
-             chrom = chrom,
-             start = start,
-             end = end) %>% 
-        makeGRangesFromDataFrame(., 
-                                 keep.extra.columns = TRUE,
-                                 seqnames.field = 'contig',
-                                 starts.in.df.are.0based = TRUE,
-                                 ignore.strand = TRUE))
-  
-  if(scale_y){
-    ymax <- map(ribo_cov_list, ~.x$coverage) %>% unlist() %>% max()
-    y_limits <- c(0, ymax)
-  } else {
-    y_limits <- NULL
-  }
-  
-  ribo_lib_names <- names(ribofns)
-  
-  if(is.null(ribo_lib_names)){
-    ribo_lib_names <- as.character(1:length(ribofns))
-  } 
-  names(ribo_cov_list) <- ribo_lib_names 
-  
-  ribotracks <- pmap(list(ribo_cov_list,
-                       names(ribo_cov_list),
-                       magma(length(ribo_cov_list), direction = 1)),
-                  function(x, y, z){
-                    DataTrack(range = x, 
-                              name =  as.character(y),
-                              chromosome = chrom, 
-                              genome = gnome,
-                              col.histogram = z,
-                              fill.histogram = z,
-                              ylim = y_limits
-                    )})
-  
-  grtrack <- GeneRegionTrack(gfeatures,
-                             genome = gnome, 
-                             chromosome=chrom, 
-                             name="",
-                          #   stacking = "dense",
-                             col.title = "black")
-  options(scipen=16)
-  if(is.null(annotation_label)){
-    annotation_label <- unique(gfeatures$symbol)[1]
-  }
-  plotTracks(c(grtrack, 
-               rnatracks,
-               ribotracks),
-             chromosome = chrom,
-             from = start,
-             to = end,
-             type = "hist",
-             reverseStrand = strand == "-", 
-             col.title = "black",
-             col.axis = "black",
-             background.title ="transparent",
-          #   lwd = .5, 
-             innerMargin = 10,
-             margin = 50,
-             main = annotation_label,
-             ...)
-
-}
-```
-
-```{r}
-bw_dir <- "~/Projects/mzt-introns/data/bigwigs"
-ribo_bw_fns <- dir(file.path(bw_dir, "drosophila", "EICHHORN"), 
-              pattern = "fwd.bw", 
-              full.names = TRUE)
-rpf_mdata <- read_tsv("~/Projects/mzt-introns/data/raw_data/drosophila/EICHHORN/PRJNA326506.txt")
-rpf_mdata <- filter(rpf_mdata, str_detect(sample_title,
-                                      "_wt_") & str_detect(sample_title, "RPF")) %>% 
-  mutate(sample_title = str_split(sample_title, "_wt_") %>% map_chr(1))
-to_keep <- c(
-  "Stage_11",
- # "Stage_14",
-  "Activated_egg",
-  "0-1_h",
-  "2-3_h",
-  "3-4_h",
-  "5-6_h")
-rpf_mdata <- filter(rpf_mdata, sample_title %in% to_keep) %>% 
-  mutate(sample_title = factor(sample_title, levels = to_keep)) %>% 
-  arrange(sample_title)
-srr_ids <- basename(ribo_bw_fns) %>% 
-  str_split(., "_", simplify = TRUE) %>%
-  .[, 1]
-ribo_bw_fns <- ribo_bw_fns[srr_ids %in% rpf_mdata$run_accession]
-
-ribo_bw_fns_fwd <- file.path(bw_dir,  "drosophila", "EICHHORN",
-                 paste0(rpf_mdata$run_accession, "_fwd.bw"))
-names(ribo_bw_fns_fwd) <- rpf_mdata$sample_title
-ribo_bw_fns_rev <- file.path(bw_dir, "drosophila", "EICHHORN",
-                 paste0(rpf_mdata$run_accession, "_rev.bw"))
-names(ribo_bw_fns_rev) <- rpf_mdata$sample_title
-
-ribo_bw_fns <- list("+" = ribo_bw_fns_fwd,
-     "-" = ribo_bw_fns_rev)
-```
-
-```{r}
-gtf_obj <- import(annots$drosophila$gtf)
-```
-
-
-```{r}
-ribo_tx_summary_plots <- function(rnabws, 
-                             ribobws,
-                             gene,
-                             isoform_annotation_df,
-                             ...){
-  
-  to_plot <- filter(isoform_annotation_df, gene_name == gene)
-  strand <- unique(to_plot$strand)[1]
-
-  features <- unique(to_plot$featureID)
-  plot_tx_ribo_coverage(rnabws[[strand]], 
-                        ribobws[[strand]],
-                 features,
-                 gtf_obj,
-                 scale_y = FALSE,
-                 cex.main = 0.75,
-                 rotation.title=0,
-                 ...
-                 )
-}
-
-genes_to_plot <- c(
-  "PNUTS",
-  "toc",
-  "CG2201",
-  "Mhcl",
-  "cnn",
-  "numb",
-  "hts",
-  "RhoGEF3",
-  "CycE",
-  "Siz")
-
-tx_figs <- file.path(fig_dir, "tx_ribo_figs")
-dir.create(tx_figs, showWarnings = FALSE)
-
-walk(genes_to_plot,
-    ~{
-      pdf(file.path(tx_figs,
-                    str_c(.x, "_tx_ribo_coverage.pdf")),
-          width = 6,
-          height = 4.5)
-      if (!.x %in% additional_annots$gene_name){
-        message(.x, " not switching iso")
-        return(NULL)
-      }
-      ribo_tx_summary_plots(bw_fns, 
-                       ribo_bw_fns, gene = .x, 
-                 isoform_annotation_df = additional_annots,
-                 title.width = 1.5,
-                 sizes = c(0.1, rep(0.25, length(bw_fns[[1]]) + length(ribo_bw_fns[[1]]))),
-                 fontsize = 8,
-                 cex.title = 1)
-      dev.off()
-    })
-
-
-tx_figs <- "../figures/pdfs/tx-ribo-coverage-plots//"
-dir.create(tx_figs, showWarnings = FALSE)
-
-walk(genes_to_plot,
-    ~{
-      pdf(file.path(tx_figs,
-                    str_c(.x, "_tx_ribo_coverage.pdf")),
-          width = 6,
-          height = 4.5)
-      if (!.x %in% additional_annots$gene_name){
-        message(.x, " not switching iso")
-        return(NULL)
-      }
-      ribo_tx_summary_plots(bw_fns, 
-                       ribo_bw_fns, gene = .x, 
-                 isoform_annotation_df = additional_annots,
-                 title.width = 1.5,
-                 sizes = c(0.1, rep(0.25, length(bw_fns[[1]]) + length(ribo_bw_fns[[1]]))),
-                 fontsize = 8,
-                 cex.title = 1)
-      dev.off()
-    })
 ```
 
 
@@ -1483,33 +1224,40 @@ isos <- read_tsv(file.path(out_dir, "all_isoform_annotations.tsv"))
 ```
 
 
-## Mass spec
 
 ```{r}
-mass_spec_evidence <- filter(isos, 
+mass_spec_evidence <- filter(isos,
                              !same_CDS, 
                              !is.na(seq),
                              tx_class == "zygotic") %>% 
   select(pep_tx, featureID) %>% 
   unique() %>% 
-  mutate(peptide_evidence = !is.na(pep_tx))
+  mutate(peptide_evidence = case_when(
+    is.na(pep_tx) ~ "non-unique CDS isoform",
+    map2(featureID, 
+         str_split(pep_tx, ","), 
+         ~.x %in% .y) %>% 
+      unlist() ~ "peptide evidence",
+    pep_tx == "no match" ~ "no peptide evidence",
+    TRUE ~ "no peptide evidence"))
 
 p <- ggplot(mass_spec_evidence, aes("1")) +
   geom_bar(aes(fill = peptide_evidence))  +
   scale_fill_viridis_d(name = "Peptides Observed \n in Mass Spec") +
   labs(x = "",
-       y = "# of proteins") + 
+       y = "# of proteins",
+       fill = "") + 
   theme(axis.text.x = element_blank())
 
 p
 
 save_plot(file.path(fig_dir, "mass_spec_overlap.pdf"),
           p,
-          base_asp = 1)
+          base_asp = 1.2)
 
 save_plot("../figures/pdfs/fig5/mass_spec_overlap.pdf",
           p,
-          base_asp = 1)
+          base_asp = 1.2)
 ```
 
 ## Protein domain analysis
@@ -1715,7 +1463,9 @@ euler_input <- !euler_input
 colnames(euler_input) <- c("CDS altered",
                            "5'UTR altered",
                            "3'UTR altered")
-fit <- eulerr::euler(euler_input)
+set.seed(42)
+fit <- eulerr::euler(euler_input, 
+                     shape = "ellipse")
 
 plot(fit,
      quantities = list(fontsize = 16),
@@ -1741,3 +1491,174 @@ plot(fit,
 dev.off()
 ```
 
+
+## RPFs
+
+Examine RPFs  in isoforms. Calculate coverage of RPFs over maternal or zygotic isoforms. Examine evidence for translation by examining sequences unique to maternal or zygotic isoforms. 
+
+Show a bar plot wiht # of annotations that are supported by RPFs.
+
+```{r}
+bw_fns <- dir("../../data/bigwigs/drosophila/EICHHORN/", 
+              pattern = "fwd.bw", 
+              full.names = TRUE)
+```
+
+
+
+```{r}
+mdata <- read_tsv("~/Projects/mzt-introns/data/raw_data/drosophila/EICHHORN/PRJNA326506.txt")
+
+rpf_mdata <- filter(mdata, str_detect(sample_title,
+                                      "_wt_") & str_detect(sample_title, "RPF"))
+
+srr_ids <- basename(bw_fns) %>% 
+  str_split(., "_", simplify = TRUE) %>%
+  .[, 1]
+
+rpf_bws <- bw_fns[srr_ids %in% rpf_mdata$run_accession]
+
+fwd_bws <- file.path("../../data/bigwigs/drosophila/EICHHORN/",
+                 paste0(rpf_mdata$run_accession, "_fwd.bw"))
+
+names(fwd_bws) <- rpf_mdata$sample_title
+
+rev_bws <- file.path("../../data/bigwigs/drosophila/EICHHORN/",
+                 paste0(rpf_mdata$run_accession, "_rev.bw"))
+
+names(rev_bws) <- rpf_mdata$sample_title
+```
+
+Get maternal or zygotic specific genomic intervals
+
+```{r}
+gtffile <- annots$drosophila$gtf
+chromfile <- annots$drosophila$chroms
+genomefile <- annots$drosophila$genome
+
+gnome <- read_tsv(chromfile, col_types = "ci---", 
+                  col_names= c("chrom", "size"))
+
+gtf <- import(gtffile)
+gtf <- as.data.frame(gtf) %>% 
+  mutate_if(is.factor, as.character)
+
+iso_ivls <- filter(gtf, 
+                  transcript_id %in% isos$featureID,
+                  type == "CDS") %>% 
+  dplyr::select(chrom = seqnames,
+                start,
+                end,
+                gene_id,
+                transcript_id,
+                strand) %>% 
+  mutate(start = start - 1L)
+
+mat_tx <- filter(isos, tx_class == "maternal", !same_CDS)
+zyg_tx <- filter(isos, tx_class == "zygotic", !same_CDS)
+
+zyg_iso <- filter(iso_ivls,
+                  transcript_id %in% zyg_tx$featureID) %>% 
+  group_by(gene_id, strand)
+
+mat_iso <- filter(iso_ivls,
+                  transcript_id %in% mat_tx$featureID) %>% 
+  group_by(gene_id, strand)
+
+zyg_specific_exons <- bed_subtract(zyg_iso, mat_iso) %>% 
+  arrange(transcript_id)
+
+mat_specific_exons <- bed_subtract(mat_iso, zyg_iso) %>% 
+  arrange(transcript_id)
+```
+
+
+```{r}
+fwd_ribo_counts <- map_dfr(fwd_bws, read_bigwig, .id = "sample") %>% 
+  mutate(strand = "+")
+rev_ribo_counts <- map_dfr(rev_bws, read_bigwig, .id = "sample") %>% 
+  mutate(strand = "-")
+
+ribo_counts <- bind_rows(fwd_ribo_counts, rev_ribo_counts) %>% 
+  bed_sort()
+
+rm(fwd_ribo_counts, rev_ribo_counts)
+
+ribo_counts <- split(ribo_counts, ribo_counts$sample )  
+```
+
+```{r}
+ribo_summary_zyg <- map_dfr(ribo_counts, 
+        ~bed_map(zyg_specific_exons, 
+                 .x, 
+                 total_coverage = sum(score, na.rm = TRUE)) %>% 
+          mutate(total_coverage = ifelse(is.na(total_coverage),
+                                        0,
+                                        total_coverage)),
+        .id = "source")
+
+ribo_summary_mat <- map_dfr(ribo_counts, 
+        ~bed_map(mat_specific_exons, 
+                 .x, 
+                 total_coverage = sum(score, na.rm = TRUE)) %>% 
+          mutate(total_coverage = ifelse(is.na(total_coverage),
+                                        0,
+                                        total_coverage)),
+        .id = "source")
+```
+
+```{r}
+ribo_summary <- bind_rows(list(
+  `Maternal exons` = ribo_summary_mat,
+  `Zygotic exons` = ribo_summary_zyg),
+  .id = "class")
+rename_stages <- c(
+  "0-1_h" = "0-1 hr",
+  "2-3_h" = "2-3 hr",
+  "3-4_h" = "3-4 hr",
+  "5-6_h" = "5-6 hr")
+
+
+ribo_summary <- mutate(ribo_summary,
+                       source = str_split(source, "_wt", simplify = TRUE) %>% 
+                         .[, 1]) %>% 
+  filter(source %in% names(rename_stages)) %>% 
+  mutate(source_renamed = rename_stages[source],
+         source_renamed = factor(source_renamed, 
+                                 levels = rename_stages))
+
+plt_dat <- ribo_summary %>% 
+  filter(class == "Zygotic exons") %>% 
+  group_by(transcript_id) %>% 
+  summarize(total_rpfs = sum(total_coverage)) %>% 
+  ungroup() %>% 
+  left_join(tibble(transcript_id = zyg_tx$featureID),
+            .) %>% 
+  mutate(evidence = case_when(
+    is.na(total_rpfs) ~ "non-unique CDS isoform",
+    total_rpfs > 10 ~ "RPFs observed (> 10)",
+    TRUE ~ "No RPFs observed"),
+         x = "1") 
+
+p <- ggplot(plt_dat,
+       aes(x)) +
+  geom_bar(aes(fill = evidence)) +
+  scale_fill_viridis_d(name = "") +
+  labs(x = "",
+       y = "# of CDS") +
+  theme(axis.text.x = element_blank())
+
+save_plot(file.path(fig_dir, "riboprofiling_coverage.pdf"),
+          p,
+          base_asp = 1.2)
+p
+
+save_plot("../figures/pdfs/fig5/riboprofiling_coverage.pdf",
+          p,
+          base_asp = 1.2)
+```
+
+## R session info
+```{r}
+sessioninfo::session_info()
+```
