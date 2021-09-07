@@ -33,11 +33,12 @@ results_dir <- file.path(project_dir, "results")
 docs_dir <- file.path(project_dir, "docs")
 db_dir <- file.path(project_dir, "dbases")
 
-#### functions ####
+### fxns ### 
 source(file.path(project_dir, "R", "utils.r"))
 
+#### options ###
 ggplot2::theme_set(theme_cowplot())
-
+readr::local_edition(1)
 
 #### Annotations ####
 
