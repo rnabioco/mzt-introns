@@ -29,15 +29,15 @@ rule fastqc:
     path.join(qc, "fastqc", "{species}", "{expt}", "{sample}_fastqc/summary.txt"),
   params:
     out_dir = path.join(qc, "fastqc", "{species}", "{expt}"),
-    job_name = "fastqc.{sample}",
-    memory = "select[mem>16] rusage[mem=16]",
   log:
     path.join(qc, "logs", "fastqc", "{expt}", "{sample}.txt") 
   message:
     "fastqc analysis of {wildcards.sample} "
   threads:
     6 
-  resources: all_threads=6
+  resources: 
+    all_threads=6,
+    mem_mb=MEM_ALLOC["DEFAULT"]    
   shell:
     """
     mkdir -p {params.out_dir}

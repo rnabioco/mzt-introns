@@ -1,7 +1,7 @@
 
 """ rules for star mapping """
 
-def _fq_types(wildcards):
+def _star_fq_types(wildcards):
   """ lookup global dictionary LIB_MAP via sample
       and lookup fastq suffixes
   """
@@ -23,36 +23,35 @@ def _fq_types(wildcards):
                            x in suffixes]
   else:
      sys.exit("no fastq suffixes found for library: {}".format(id))
-
   return fq_names
 
 def _fqlist_to_str(wildcards):
-    fqs = _fq_types(wildcards)
+    fqs = _star_fq_types(wildcards)
     return " ".join(fqs)
 
 rule star_align:
     """ map reads to genome/transcriptome using STAR 
     """
     input:
-      _fq_types, 
+      _star_fq_types, 
       idx_dummy_file = path.join("{data}", "star", "logs", "{species}_index_tracking.txt"), 
     output:
       bam = "{data}/star/{species}/{expt}/{sample}/{sample}_sorted.bam",
       bai = "{data}/star/{species}/{expt}/{sample}/{sample}_sorted.bam.bai",
     params:
-      job_name = "star",
       tmpbam = "{data}/star/{species}/{expt}/{sample}/{sample}_Aligned.out.bam",
       genome = lambda wildcards: GENOME_DIRS[wildcards.species],
       io = _fqlist_to_str, 
       out = "{data}/star/{species}/{expt}/{sample}/{sample}_",
-      memory = "select[mem>60] rusage[mem=60]",
     log:
       "{data}/star/logs/{species}/{expt}/{sample}_align.txt"
     message:
       "running star alignments "
     threads:
       12
-    resources: all_threads=12
+    resources: 
+      all_threads=12,
+      mem_mb=MEM_ALLOC["STAR"]
     shell:
       """
 
@@ -87,15 +86,15 @@ rule star_idx:
     genome_dir = lambda wildcards: GENOME_DIRS[wildcards.species],
     genome = lambda wildcards: GENOMES[wildcards.species],
     transcripts = lambda wildcards: TRANSCRIPTS[wildcards.species],
-    job_name = "star_idx",
-    memory = "select[mem>110] rusage[mem=110]",
   log:
     path.join("{data}", "star", "logs", "{species}_idx.txt")
   message:
     "building star index "
   threads:
     24
-  resources: all_threads=24
+  resources: 
+      all_threads=24,
+      mem_mb=MEM_ALLOC["STAR"]
   shell:
     """
     mkdir -p {params.genome_dir}

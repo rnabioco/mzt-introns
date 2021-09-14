@@ -1,9 +1,66 @@
-# config for pre-mRNA quantification snakemake pipeline #
-
+# config for MZT intron quantification snakemake pipeline #
 
 # directory with fastqs and generated data
 DATA: 
-    "../data-rerun"
+    "../data"
+
+# directory for output databases
+DBASES: 
+    "../dbases" 
+
+# genome fasta file
+GENOMES:
+    xenopus_t: "../dbases/xenopus_t/ext/xenTro9.fa"
+
+# transcript annotation in GTF format
+TRANSCRIPTS:
+    xenopus_t: "../dbases/xenopus_t/ext/xenTro9.gtf"
+
+# intron annotation in SAF format (see results/00.Rmd to generate from
+# STAR alignments)
+# leave blank if traditional alignmnet approach not needed
+INTRONS:
+    xenopus_t: ""
+
+EXONS:
+    xenopus_t: ""
+
+# fasta index file
+CHROM_SIZES:
+    xenopus_t: "../dbases/xenopus_t/ext/xenTro9.fa.fai"
+
+# Path to star index
+GENOME_DIRS:
+    xenopus_t: "../dbases/xenopus_t/star/jgi_xentrop9.1"
+
+# experiment specific settings
+# trim: settings for cutadapt
+# intron/exon_count: settings for featureCounts, only run if introns/exons
+# defined above
+# stranded: either forward of reverse
+# map: additional settings for salmon quantification
+# bt_map: additional settings for bowtie2 mapping  
+# fq: suffix for R1 and R2
+#
+
+OWENS_RIBO:
+    trim: " "
+    intron_count: " --minOverlap 10 -s 0 -p "
+    exon_count: " --fracOverlap 1 -s 0 -p "
+    map: " -l ISR "
+    stranded: "reverse"
+    bt_map: " --nofw "
+    fq:
+        - "_1.fastq.gz"
+        - "_2.fastq.gz"
+
+# sample names that indicate samples from the earliest timepoint in the timecourse
+# (e.g. a zygote or other pre-ZGA sample). 
+T0_SAMPLES:
+    - "SRR1795631"
+
+# Path to file with library definitions
+LIB_PARAMS: "frog_ribozero_lib_params.tsv"
 
 # directory for auxillary scripts
 SRC: 
@@ -12,47 +69,3 @@ SRC:
 # directory for R scripts
 RSRC:
   "../R"
-
-  # directory for databases
-DBASES: 
-    "../dbases-rerun" 
-
-GENOMES:
-    xenopus_t: "/beevol/home/riemondy/Projects/shared_dbases/genomes/xenopus/jgi_xentrop9.1/xenTro9.fa"
-
-TRANSCRIPTS:
-    xenopus_t: "/beevol/home/riemondy/Projects/shared_dbases/annotation/xenopus/jgi_xentrop9.1/xenTro9.gtf"
-
-#INTRONS:
-    #    drosophila: "/beevol/home/riemondy/Projects/mzt-introns/dbases/drosophila/saf/fly_introns.saf"
-
-#EXONS:
-    #    drosophila: "/beevol/home/riemondy/Projects/mzt-introns/dbases/drosophila/saf/fly_exons.saf"
-
-CHROM_SIZES:
-    zebrafish:  "/beevol/home/riemondy/Projects/shared_dbases/genomes/zebrafish/danRer10/danRer10.fa.fai"
-
-GENOME_DIRS:
-    xenopus_t: "/beevol/home/riemondy/Projects/shared_dbases/star/xenopus/jgi_xentrop9.1"
-
-SALMON_K:
-    xenopus_t: 31
-
-OWENS_RIBO:
-    trim: " "
-    intron_count: " --minOverlap 5 -s 0 -p "
-    exon_count: " --fracOverlap 1 -s 0 -p "
-    map: " -l ISR "
-    idx: " -k 31 "
-    stranded: "reverse"
-    bt_map: " --nofw "
-    fq: 
-        - "_1.fastq.gz"
-        - "_2.fastq.gz"
-
-T0_SAMPLES: 
-    - "SRR1795631"
-
-T0_EXPT: "OWENS_RIBO"
-
-LIB_PARAMS: "frog_ribozero_lib_params.tsv"

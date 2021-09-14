@@ -35,36 +35,6 @@ def _get_bedgraphs(wildcards):
 
   return bg_fns
 
-#rule make_bigwigs:
-#  input:
-#    _get_bedgraphs
-#  output:
-#    fwd = path.join(DATA, "bigwigs", "{species}", "{expt}", "{sample}_fwd.bw"),
-#    rev = path.join(DATA, "bigwigs", "{species}", "{expt}", "{sample}_rev.bw"),
-#    revneg = path.join(DATA, "bigwigs", "{species}", "{expt}", "{sample}_rev_neg.bw"),
-#  params:
-#    chroms = lambda wildcards: CHROM_SIZES[wildcards.species],
-#    job_name = "bigwig.{sample}",
-#    memory = "select[mem>4] rusage[mem=4]",
-#  log:
-#    path.join(DATA, "bigwigs", "logs", "{species}", "{expt}", "{sample}.txt") 
-#  message:
-#    "building bigwigs for {wildcards.sample} "
-#  resources: all_threads=1
-#  shell:
-#    """
-#    awk 'NF != 6' {input[0]} | bedSort stdin {input[0]}.sort
-#    awk 'NF != 6' {input[1]} | bedSort stdin {input[1]}.sort
-#
-#    bedGraphToBigWig {input[0]}.sort {params.chroms} {output.fwd}
-#    bedGraphToBigWig {input[1]}.sort {params.chroms} {output.rev}
-#    awk '{{$4=$4*-1; print}}' {input[1]}.sort > {input[1]}.tmp
-#    
-#    bedGraphToBigWig {input[1]}.tmp {params.chroms} {output.revneg}
-#
-#    rm {input[1]}.tmp {input[0]}.sort {input[1]}.sort
-#    
-#    """
 
 def _deeptools_strand_setting(wildcards):
   """
@@ -110,163 +80,7 @@ def _bedtools_strand_setting(wildcards):
 
   return strand_cmd
 
-#rule bam_to_bigwig:
-#  input:
-#    bam = path.join(DATA, "star", "{species}", "{expt}", "{sample}",
-#        "{sample}_sorted.bam"),
-#    bai = path.join(DATA, "star", "{species}", "{expt}", "{sample}",
-#        "{sample}_sorted.bam.bai"),
-#  output:
-#    fwd = path.join(DATA, "bigwigs", "{species}", "{expt}", "{sample}_fwd.bw"),
-#    rev = path.join(DATA, "bigwigs", "{species}", "{expt}", "{sample}_rev.bw"),
-#    revneg = path.join(DATA, "bigwigs", "{species}", "{expt}", "{sample}_rev_neg.bw"),
-#  params:
-#    strand_settings = _deeptools_strand_setting,
-#    job_name = "bigwig.{sample}",
-#    memory = "select[mem>20] rusage[mem=20]",
-#  log:
-#    path.join(DATA, "bigwigs", "logs", "{species}", "{expt}", "{sample}.txt") 
-#  message:
-#    "building bigwigs for {wildcards.sample} "
-#  threads: 12
-#  resources: all_threads=12
-#  shell:
-#    """
-#    bamCoverage \
-#    -b {input.bam} \
-#    -o {output.fwd} \
-#    --filterRNAstrand {params.strand_settings[0]} \
-#    -bs 1 \
-#    -p {threads}
-#
-#    bamCoverage \
-#    -b {input.bam} \
-#    -o {output.rev} \
-#    --filterRNAstrand {params.strand_settings[1]} \
-#    -bs 1 \
-#    -p {threads}
-#    
-#    bamCoverage \
-#    -b {input.bam} \
-#    -o {output.revneg} \
-#    --filterRNAstrand {params.strand_settings[1]} \
-#    -bs 1 \
-#    --scaleFactor -1.0 \
-#    -p {threads}
-#    """
 
-#rule tx_bam_to_bigwig:
-#  input:
-#    bam = path.join(DATA, "salmon", "{species}", "{expt}", "{fasta}", "{sample}",
-#        "quasi.bam"),
-#    bai = path.join(DATA, "salmon", "{species}", "{expt}", "{fasta}", "{sample}",
-#        "quasi.bam.bai"),
-#  output:
-#    fwd = path.join(DATA, "bigwigs", "{species}", "salmon", "{fasta}", "{expt}", "{sample}_fwd.bw"),
-#    rev = path.join(DATA, "bigwigs", "{species}", "salmon", "{fasta}", "{expt}", "{sample}_rev.bw"),
-#    revneg = path.join(DATA, "bigwigs", "{species}", "salmon", "{fasta}", "{expt}", "{sample}_rev_neg.bw"),
-#  params:
-#    strand_settings = _deeptools_strand_setting,
-#    job_name = "bigwig.{sample}",
-#    memory = "select[mem>20] rusage[mem=20]",
-#  log:
-#    path.join(DATA, "bigwigs", "logs", "{species}", "{expt}", "{sample}.txt") 
-#  message:
-#    "building bigwigs for {wildcards.sample} "
-#  threads: 12
-#  resources: all_threads=12
-#  shell:
-#    """
-#    bamCoverage \
-#    -b {input.bam} \
-#    -o {output.fwd} \
-#    -of "bedgraph" \
-#    --filterRNAstrand {params.strand_settings[0]} \
-#    -bs 1 \
-#    -p {threads}
-#
-#    bamCoverage \
-#    -b {input.bam} \
-#    -o {output.rev} \
-#    -of "bedgraph" \
-#    --filterRNAstrand {params.strand_settings[1]} \
-#    -bs 1 \
-#    -p {threads}
-#    
-#    bamCoverage \
-#    -b {input.bam} \
-#    -o {output.revneg} \
-#    -of "bedgraph" \
-#    --filterRNAstrand {params.strand_settings[1]} \
-#    -bs 1 \
-#    --scaleFactor -1.0 \
-#    -p {threads}
-#    """
-
-rule tx_bam_to_bigwig:
-  input:
-    bam = path.join(DATA, "salmon", "{species}", "{expt}", "{fasta}", "{sample}",
-        "quasi.bam"),
-    bai = path.join(DATA, "salmon", "{species}", "{expt}", "{fasta}", "{sample}",
-        "quasi.bam.bai"),
-  output:
-    fwd = path.join(DATA, "bigwigs", "{species}", "salmon", "{fasta}", "{expt}", "{sample}_fwd.bw"),
-    rev = path.join(DATA, "bigwigs", "{species}", "salmon", "{fasta}", "{expt}", "{sample}_rev.bw"),
-    revneg = path.join(DATA, "bigwigs", "{species}", "salmon", "{fasta}", "{expt}", "{sample}_rev_neg.bw"),
-  params:
-    strand_settings = _bedtools_strand_setting,
-    genome =  path.join(DBASES, "{species}",  "{fasta}.fa.fai"),
-    job_name = "bigwig.{sample}",
-    memory = "select[mem>20] rusage[mem=20]",
-  log:
-    path.join(DATA, "bigwigs", "logs", "{species}", "{expt}", "{sample}.txt") 
-  message:
-    "building bigwigs for {wildcards.sample} "
-  threads: 1
-  resources: all_threads=1
-  shell:
-    """
-    bedtools genomecov \
-            -bg \
-            -split \
-            -du \
-            -strand {params.strand_settings[0]} \
-            -ibam {input.bam} \
-            > {output.fwd}.tmp
-    
-    bedtools genomecov \
-            -bg \
-            -split \
-            -du \
-            -strand {params.strand_settings[1]} \
-            -ibam {input.bam} \
-            > {output.rev}.tmp
-    
-    bedtools genomecov \
-            -bg \
-            -split \
-            -du \
-            -strand {params.strand_settings[1]} \
-            -ibam {input.bam} \
-            -scale -1.0 \
-            > {output.revneg}.tmp
-    
-    # inplace sorting
-    bedSort {output.fwd}.tmp {output.fwd}.tmp
-    bedSort {output.rev}.tmp {output.rev}.tmp
-    bedSort {output.revneg}.tmp {output.revneg}.tmp
-
-    bedGraphToBigWig \
-      {output.fwd}.tmp {params.genome} {output.fwd}
-    
-    bedGraphToBigWig \
-      {output.rev}.tmp {params.genome} {output.rev}
-    
-    bedGraphToBigWig \
-      {output.revneg}.tmp {params.genome} {output.revneg}
-    
-    rm {output.fwd}.tmp {output.rev}.tmp {output.revneg}.tmp
-    """
 
 rule bt2_tx_bam_to_bigwig:
   input:
@@ -278,14 +92,14 @@ rule bt2_tx_bam_to_bigwig:
   params:
     strand_settings = _bedtools_strand_setting,
     genome =  path.join(DBASES, "{species}",  "{fasta}.fa.fai"),
-    job_name = "bigwig.{sample}",
-    memory = "select[mem>20] rusage[mem=20]",
   log:
     path.join(DATA, "bigwigs", "logs", "{species}", "{expt}", "{sample}.txt") 
   message:
     "building bigwigs for {wildcards.sample} "
   threads: 6 
-  resources: all_threads=6
+  resources: 
+      all_threads=6,
+      mem_mb=MEM_ALLOC["DEFAULT"]    
   shell:
     """
     samtools sort -@ 6 {input.bam} > {input.bam}.tmp
@@ -332,14 +146,14 @@ rule bam_to_bigwig_cpm:
     "{sample}_rev.bw"),
   params:
     strand_settings = _deeptools_strand_setting,
-    job_name = "bigwig.{sample}",
-    memory = "select[mem>20] rusage[mem=20]",
   log:
     path.join(DATA, "bigwigs", "logs", "{species}", "{expt}", "cpm", "{sample}.txt") 
   message:
     "building bigwigs for {wildcards.sample} "
   threads: 12
-  resources: all_threads=12
+  resources: 
+      all_threads=12,
+      mem_mb=MEM_ALLOC["DEFAULT"]    
   shell:
     """
     bamCoverage \

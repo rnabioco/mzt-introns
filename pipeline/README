@@ -1,9 +1,71 @@
+# Snakemake pipeline for quantifying intron signal in MZT time course
+# libraries
 
-# Requirements
+## Requirements
+    - snakemake >= 3.11.2
+    - fastqc >= 0.11.7
+    - salmon >= 1.1.0
+    - STAR >= 2.5.2a
     - Bowtie2 (>=2.4.4)
-    - fastqc
-    - samtools 
-    - STAR
-    - salmon/1.1.0
-    - R (eisaR, tximport, valr)
-    - subread
+    - R (>= 4.0)
+    - subread ()
+    - eisaR ()
+    - readr ()
+    - purrr ()
+    - dplyr ()
+    - rtracklayer ()
+    - Biostrings ()
+    - GenomicRanges ()
+    - Rsamtools ()
+    - valr ()
+    - doParallel ()
+
+
+## Example usage
+
+This pipeline is designed to be run on a server and was tested on a cluster set up with LSF. It
+can also be run as a standalone pipeline without using a cluster, if sufficieint memory/space is 
+available. 
+
+1) Clone the repository
+
+```bash
+git clone git@github.com:rnabioco/mzt-introns
+```
+
+2) Download reference genome, transcriptome, and transcript annotations. If you already have these
+then they can be specified in the config file. If not see `dbases/drosophila/ext/dl_dbases.sh` to 
+download references for Drosophila. 
+
+3) Download raw data: For this example we will download rRNA depleted RNA-seq libraries prepared from 
+drosophila embryos at different stages pre and post ZGA. See example download script from `data/raw_data/drosophila/RISSLAND/dl_data.sh`
+Note requires sra-tools to download data. Also note that the fastqs should be placed into a subdirectory
+named indicating the species and name of the experiment, for example `raw_data/drosophila/RISSLAND`. If you'd like the 
+output data to be name `my_project`, then the fastqs should be placed in `my_project/raw_data/drosophila/RISSLAND`
+
+4) Prepare a config file and lib_params file containing information about the RNA-seq libraries. For these
+data the config file `config-drosophila-rissland.yaml` and params file `fly_rissland_lib_params.tsv` are
+for these example data. Change the `DATA` directory and path to `LIB_PARAMS` as needed.
+
+5) Test the snakemake pipeline. This command should show all of the jobs that will be executed 
+
+```bash
+snakemake -npr --configfile your-config-file.yaml
+```
+
+6a) Run the pipeline (local mode, no cluster support)
+
+```bash
+snakemake --configfile your-config-file.yaml
+```
+
+6b) Run the pipeline on an LSF compatible cluster. See snakemake.sh for an example script to run snakemake on a cluster
+
+
+## Output files
+
+
+## Performing differential expression
+
+See vignette for example of how to conduct differential expression and classify genes. 
+

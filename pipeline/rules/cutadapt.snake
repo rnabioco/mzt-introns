@@ -30,7 +30,7 @@ def _fq_types(wildcards):
                            wildcards.expt, 
                            wildcards.sample + x) for x in fq_types]
   else:
-     sys.exit("WARNING: no trimming settings found for library: {}".format(id))
+     sys.exit("No trimming settings found for library: {}".format(id))
 
   return fq_names
 
@@ -42,15 +42,15 @@ rule cutadapt_single:
       "{sample}_trimmed.fastq.gz")
   params:
     settings = _trim_settings,
-    job_name = "trim.{sample}",
-    memory = "select[mem>4] rusage[mem=4]",
   log:
     path.join("{data}", "fastq", "trimmed", "logs", "{species}", "{expt}", "{sample}.txt") 
   message:
     " trimming illumina adapters" 
   threads:
     1
-  resources: all_threads=1
+  resources: 
+      all_threads=1,
+      mem_mb=MEM_ALLOC["DEFAULT"]
   shell:
     """
     cutadapt \
@@ -70,15 +70,15 @@ rule cutadapt_paired:
     "{sample}_R2_trimmed.fastq.gz") 
   params:
     settings = _trim_settings,
-    job_name = "trim.{sample}",
-    memory = "select[mem>4] rusage[mem=4]",
   log:
     path.join("{data}", "fastq", "trimmed", "logs", "{species}", "{sample}.txt") 
   message:
     " trimming illumina adapters" 
   threads:
     1
-  resources: all_threads=1
+  resources: 
+      all_threads=1,
+      mem_mb=MEM_ALLOC["DEFAULT"]
   shell:
     """
     cutadapt \

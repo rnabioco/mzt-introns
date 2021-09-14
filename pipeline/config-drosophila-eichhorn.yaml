@@ -10,28 +10,28 @@ DBASES:
 
 # genome fasta file
 GENOMES:
-    xenopus_t: "../dbases/xenopus_t/ext/xenTro9.fa"
+    drosophila: "../dbases/drosophila/ext/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
 
 # transcript annotation in GTF format
 TRANSCRIPTS:
-    xenopus_t: "../dbases/xenopus_t/ext/xenTro9.gtf"
+    drosophila: "../dbases/drosophila/ext/Drosophila_melanogaster.BDGP6.84.gtf"
 
 # intron annotation in SAF format (see results/00.Rmd to generate from
 # STAR alignments)
 # leave blank if traditional alignmnet approach not needed
 INTRONS:
-    xenopus_t: ""
+    drosophila: ""
 
 EXONS:
-    xenopus_t: ""
+    drosophila: ""
 
 # fasta index file
 CHROM_SIZES:
-    xenopus_t: "../dbases/xenopus_t/ext/xenTro9.fa.fai"
+    drosophila: "../dbases/drosophila/ext/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
 
 # Path to star index
 GENOME_DIRS:
-    xenopus_t: "../dbases/xenopus_t/star/jgi_xentrop9.1"
+    drosophila: "../dbases/drosophila/star/BDGP6"
 
 # experiment specific settings
 # trim: settings for cutadapt
@@ -42,26 +42,25 @@ GENOME_DIRS:
 # bt_map: additional settings for bowtie2 mapping  
 # fq: suffix for R1 and R2
 #
-
-OWENS_POLYA:
-    trim: " "
-    intron_count: " --minOverlap 10 -s 0 -p "
-    exon_count: " --fracOverlap 1 -s 0 -p "
-    map: " -l ISR "
-    stranded: "reverse"
-    bt_map: " --nofw "
-    fq:
-        - "_1.fastq.gz"
-        - "_2.fastq.gz"
+EICHHORN:
+    trim: " -q 10 -a 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC' "
+    intron_count: " --minOverlap 10 -s 1 "
+    exon_count: " --fracOverlap 1 -s 1 "
+    map: " --fldMean 40 --fldSD 4 --libType 'SF' "
+    stranded: "forward"
+    bt_map: " --norc "
+    fq: 
+        - ".fastq.gz"
 
 # sample names that indicate samples from the earliest timepoint in the timecourse
 # (e.g. a zygote or other pre-ZGA sample). 
 T0_SAMPLES:
-    - "SRR1795535"
-    - "SRR1795679"
+    - "SRR3710279"
+    - "SRR3710280"
+    - "SRR3710291"
 
 # Path to file with library definitions
-LIB_PARAMS: "frog_polya_lib_params.tsv"
+LIB_PARAMS: "fly_eichhorn_lib_params.tsv"
 
 # directory for auxillary scripts
 SRC: 

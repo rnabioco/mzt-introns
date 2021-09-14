@@ -3,7 +3,65 @@
 
 # directory with fastqs and generated data
 DATA: 
-    "../data-rerun"
+    "../data"
+
+# directory for output databases
+DBASES: 
+    "../dbases" 
+
+# genome fasta file
+GENOMES:
+    chicken: "../dbases/chicken/ext/Gallus_gallus.Gallus_gallus-5.0.dna.toplevel.fa"
+
+# transcript annotation in GTF format
+TRANSCRIPTS:
+    chicken: "../dbases/chicken/ext/Gallus_gallus.Gallus_gallus-5.0.94.gtf"
+
+# intron annotation in SAF format (see results/00.Rmd to generate from
+# STAR alignments)
+# leave blank if traditional alignmnet approach not needed
+INTRONS:
+    chicken: ""
+
+EXONS:
+    chicken: ""
+
+# fasta index file
+CHROM_SIZES:
+    chicken: "../dbases/chicken/extGallus_gallus.Gallus_gallus-5.0.dna.toplevel.fa.fai"
+
+# Path to star index
+GENOME_DIRS:
+    chicken: "../dbases/chicken/star/gallus_gallus_5"
+
+# experiment specific settings
+# trim: settings for cutadapt
+# intron/exon_count: settings for featureCounts, only run if introns/exons
+# defined above
+# map: additional settings for salmon quantification
+# bt_map: additional settings for bowtie2 mapping  
+# fq: suffix for R1 and R2
+#
+HWANG:
+    trim: " -q 10 -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGTAGATCTCGGTGGTCGCCGTATCATT  "
+    intron_count: " --minOverlap 5 -s 2 -p "
+    exon_count: " --fracOverlap 1 -s 2 -p "
+    map: " --libType 'A' "
+    stranded: "reverse"
+    bt_map: " --nofw "
+    fq: 
+        - "_1.fastq.gz"
+        - "_2.fastq.gz"
+
+# sample names that indicate samples from the earliest timepoint in the timecourse
+# (e.g. a zygote or other pre-ZGA sample). 
+T0_SAMPLES:
+    - "SRR4204939"
+    - "SRR4204940"
+    - "SRR4204941"
+
+# Path to file with library definitions
+LIB_PARAMS: "chicken_lib_params.tsv"
 
 # directory for auxillary scripts
 SRC: 
@@ -12,50 +70,3 @@ SRC:
 # directory for R scripts
 RSRC:
   "../R"
-
-  # directory for databases
-DBASES: 
-    "../dbases-rerun" 
-
-GENOMES:
-    chicken: "/beevol/home/riemondy/Projects/shared_dbases/genomes/chicken/gallus_gallus_5/Gallus_gallus.Gallus_gallus-5.0.dna.toplevel.fa"
-
-TRANSCRIPTS:
-    chicken: "/beevol/home/riemondy/Projects/shared_dbases/annotation/chicken/gallus_gallus_5/Gallus_gallus.Gallus_gallus-5.0.94.gtf"
-
-INTRONS:
-    chicken: "/beevol/home/riemondy/Projects/mzt-introns/dbases/chicken/saf/chicken_introns.saf"
-
-EXONS:
-    chicken: "/beevol/home/riemondy/Projects/mzt-introns/dbases/chicken/saf/chicken_exons.saf"
-
-CHROM_SIZES:
-    chicken: "/beevol/home/riemondy/Projects/shared_dbases/genomes/chicken/gallus_gallus_5/Gallus_gallus.Gallus_gallus-5.0.dna.toplevel.fa.fai"
-
-GENOME_DIRS:
-    chicken: "/beevol/home/riemondy/Projects/shared_dbases/star/chicken/gallus_gallus_5"
-
-SALMON_K:
-    chicken: 31
-
-HWANG:
-    trim: " -q 10 -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGTAGATCTCGGTGGTCGCCGTATCATT  "
-    intron_count: " --minOverlap 5 -s 2 -p "
-    exon_count: " --fracOverlap 1 -s 2 -p "
-    map: " --libType 'A' "
-    idx: " -k 31 "
-    stranded: "reverse"
-    bt_map: " --nofw "
-    fq: 
-        - "_1.fastq.gz"
-        - "_2.fastq.gz"
-
-T0_SAMPLES:
-    - "SRR4204939"
-    - "SRR4204940"
-    - "SRR4204941"
-
-T0_EXPT: "HWANG"
-
-LIB_PARAMS: "chicken_lib_params.tsv"
-

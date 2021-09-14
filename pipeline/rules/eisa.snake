@@ -11,18 +11,18 @@ rule eisa_prep:
         os.path.join(DBASES, "{species}", "eisa.fa"),
         os.path.join(DBASES, "{species}", "eisa", "eisaR.gtf"),
     params:
-      job_name = "eisa",
       outdir = os.path.join(DBASES, "{species}"),
       r = os.path.join(RSRC, "eisa.R"),
-      memory = "select[mem>8] rusage[mem=8]",
     log:
       os.path.join(DBASES, "{species}", "eisa", "logs", "prep.txt")
     message:
       "generating eisa reference "
     threads: 1
-    resources: all_threads=1
+    resources: 
+        all_threads=1,
+        mem_mb=MEM_ALLOC["DEFAULT"]
     shell:
-      """
+        """
       Rscript --vanilla {params.r} {input.gtf} {input.fa} {wildcards.species} {params.outdir}
       """
 
@@ -51,17 +51,17 @@ rule eisa_mask:
       bed = os.path.join(DBASES, "{species}", "intron_mask",
               "intron_mask_txcoords_{fasta}_bt2_align.bed"),
     params:
-      job_name = "eisa",
       eisadir = os.path.join(DBASES, "{species}", "eisa"),
       outdir = os.path.join(DBASES, "{species}"),
       r = os.path.join(RSRC, "mask_introns.R"),
-      memory = "select[mem>24] rusage[mem=24]",
     log:
       os.path.join(DBASES, "{species}", "eisa", "logs", "mask.txt")
     message:
       "generating eisa reference with intron coverage masked "
     threads: 8
-    resources: all_threads=8
+    resources: 
+        all_threads=8,
+        mem_mb=MEM_ALLOC["SALMON"]
     shell:
       """
       Rscript --vanilla \
@@ -69,6 +69,7 @@ rule eisa_mask:
               {params.eisadir} \
               {wildcards.species} \
               {params.outdir} \
+              {threads} \
               {input} 
       """
 
@@ -82,16 +83,16 @@ rule mask_fa:
     output:
       fa = os.path.join(DBASES, "{species}", "{fasta}_masked.fa")
     params:
-      job_name = "eisa",
       eisadir = os.path.join(DBASES, "{species}", "eisa"),
       outdir = os.path.join(DBASES, "{species}"),
-      memory = "select[mem>24] rusage[mem=24]",
     log:
       os.path.join(DBASES, "{species}", "eisa", "logs", "mask_fasta.txt")
     message:
       "generating eisa reference with intron coverage masked "
-    threads: 8
-    resources: all_threads=8
+    threads: 1
+    resources: 
+        all_threads=1,
+        mem_mb=MEM_ALLOC["SALMON"]
     shell:
       """
       bash {SRC}/mask_filter_fa.sh \

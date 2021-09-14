@@ -1,7 +1,7 @@
 ''' rules to count reads overlapping genes '''
 from pathlib import Path
 
-def _intron_settings(wildcards):
+def _strand_settings(wildcards):
   """ lookup global dictionary LIB_MAP via sample
       wildcard and return settings for featurecounts 
       based on library type definition 
@@ -12,89 +12,52 @@ def _intron_settings(wildcards):
   else:
      sys.exit(f"config settings for {id} not found ")
 
-  if "intron_count" in config[lib_attrs]:    
-     settings = config[lib_attrs]["intron_count"]
+  if "stranded" in config[lib_attrs]:    
+     strand = config[lib_attrs]["stranded"]
   else:
-     settings = None
-
-  return settings
-
-def _exon_settings(wildcards):
-  """ lookup global dictionary LIB_MAP via sample
-      wildcard and return settings for featurecounts 
-      based on library type definition 
-  """
-  id = os.path.basename(wildcards.sample)
-  if id in LIB_MAP:
-     lib_attrs = LIB_MAP[id]
+     sys.exit(f"stranded settings for {id} not found ")
+  
+  if strand == "forward":
+      setting = 1
+  elif strand == "reverse":
+      setting = 2
   else:
-     sys.exit(f"config settings for {id} not found ")
+      setting == 0
 
-  if "exon_count" in config[lib_attrs]:    
-     settings = config[lib_attrs]["exon_count"]
-  else:
-     settings = None  
+  return setting
 
-  return settings
 
-rule fc_introns:
+rule fc_introns_exons:
   input:
     bam = "{data}/star/{species}/{expt}/{sample}/{sample}_sorted.bam",
   output:
-    "{data}/featurecounts/{species}/{expt}/{sample}_intron_counts.tsv",
+    "{data}/featurecounts/{species}/{expt}/{sample}_intron_exon_counts.tsv",
   params:
-    intron_count = _intron_settings,
-    job_name = "{sample}.bamcount",
-    memory = "select[mem>8] rusage[mem=8]",
-    annots = lambda wildcards: INTRONS[wildcards.species],
+    in_annots = lambda wildcards: INTRONS[wildcards.species],
+    ex_annots = lambda wildcards: EXONS[wildcards.species],
+    strand = _strand_settings,
+    r = os.path.join(RSRC, "fcount_introns_exons.R"),
+    out_pre = "{data}/featurecounts/{species}/{expt}/{sample}"
   log:
     "{data}/featurecounts/logs/{species}/{expt}/{sample}_intron_summary.txt"
   threads:
     12
-  resources: all_threads=12
+  resources: 
+      all_threads=12,
+      mem_mb=MEM_ALLOC["DEFAULT"]
   run:
-    if params.intron_count:
+    if params.in_annots and params.ex_annots:
       shell(
         """
-        featureCounts \
-          {params.intron_count} \
-          -F 'SAF' \
-          -a {params.annots} \
-          -o {output} \
-          -T {threads} \
-          {input}
+        Rscript --vanilla \
+                {params.r} \
+                {input} \
+                {params.in_annots} \
+                {params.ex_annots} \
+                {params.strand} \
+                {output} \
+                {threads}
         """)
     else:
       Path(output[0]).touch()
-
-rule fc_exons:
-  input:
-    bam = "{data}/star/{species}/{expt}/{sample}/{sample}_sorted.bam",
-  output:
-    "{data}/featurecounts/{species}/{expt}/{sample}_exon_counts.tsv",
-  params:
-    exon_count = _exon_settings,
-    job_name = "{sample}.bamcount",
-    memory = "select[mem>8] rusage[mem=8]",
-    annots = lambda wildcards: EXONS[wildcards.species],
-  log:
-    "{data}/featurecounts/logs/{species}/{expt}/{sample}_exon_summary.txt"
-  threads:
-    12
-  resources: all_threads=12
-  run:
-    if params.exon_count:
-      shell(
-        """
-        featureCounts \
-          {params.exon_count} \
-          -F 'SAF' \
-          -a {params.annots} \
-          -o {output} \
-          -T {threads} \
-          {input}
-       """)
-    else:
-      Path(output[0]).touch()
-
-
+    

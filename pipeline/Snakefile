@@ -1,13 +1,12 @@
 shell.executable("/bin/bash")
 shell.prefix("source ~/.bash_profile; ")
+
 from os import path
 from glob import glob
 import sys
 import itertools
 
-""" Snakemake pipeline for primary expression quanitification """ 
-
-configfile: "config.yaml"
+""" Snakemake pipeline for intron quantification of MZT timecourse datasets """ 
 
 DATA = config["DATA"]
 SRC = config["SRC"]
@@ -21,13 +20,19 @@ GENOMES = config["GENOMES"]
 TRANSCRIPTS = config["TRANSCRIPTS"]
 CHROM_SIZES = config["CHROM_SIZES"]
 GENOME_DIRS = config["GENOME_DIRS"]
-SALMON_K = config["SALMON_K"]
 INTRONS = config["INTRONS"]
 EXONS = config["EXONS"]
+MEM_ALLOC = config["MALLOC"]
+CLUSTER = config["CLUSTER"]
 
+for k in MEM_ALLOC:
+  if CLUSTER == "LSF":
+    MEM_ALLOC[k] = int(int(MEM_ALLOC[k]) / 1024)
+  else:
+    MEM_ALLOC[k] = int(MEM_ALLOC)
 
 LIB_MAP = {}
-EXPTS = []
+EXPT = []
 SPECIES = [] 
 SAMPLES = []
 
@@ -37,9 +42,15 @@ with open(config["LIB_PARAMS"], 'r') as f:
         if line.startswith("#"): continue
         fields = line.split()
         LIB_MAP[fields[0]] = fields[1]
-        EXPTS.append(fields[1])
+        EXPT.append(fields[1])
         SPECIES.append(fields[2])
         SAMPLES.append(fields[0])
+
+if len(SPECIES) == 0 or len(SAMPLES) == 0 or len(EXPT) == 0:
+    sys.exit(f"unable to parse lib params file {config['LIB_PARAMS']}")
+
+if len(set(EXPT)) > 1:
+    sys.exit(f"pipeline can only process 1 experiment at a time")
 
 print("processing the following libraries")
 [print("library {} from species {} from experiment {}".format(x,
@@ -47,70 +58,47 @@ print("processing the following libraries")
                                                               LIB_MAP[x])) for i, x in enumerate(SAMPLES)]
 
 SPECIES = list(set(SPECIES))[0]
+EXPT = list(set(EXPT))[0]
+
 FASTA_TYPE = "eisa"
 MSKED_FASTA = "eisa_masked"
 
-T0_EXPT = config["T0_EXPT"]
+T0_EXPT = EXPT 
 T0_SAMPLES = config["T0_SAMPLES"]
 
+traditional_alignment_outputs = []
+
+if INTRONS[SPECIES] != "" and EXONS[SPECIES] != "":
+    traditional_alignment_outputs = expand(path.join(DATA,
+                           "featurecounts",
+                           SPECIES,
+                           EXPT,
+                           "{sample}_intron_exon_counts.tsv"),
+       sample = SAMPLES),
+  
 rule all:
   input: 
     path.join(DBASES, SPECIES, "eisa.fa"),
     path.join(DBASES, SPECIES, "eisa", "eisaR.gtf"),
     path.join(DBASES, SPECIES, "bt2", FASTA_TYPE + ".1.bt2"),
-    
-    expand(path.join(DATA, 
-                     "fastq", 
-                     "trimmed", 
-                     SPECIES, 
-                     "{expt}",
-                     "{sample}_trimmed.fastq.gz"),
-           zip,
-           sample = SAMPLES,
-           expt = len(SAMPLES) * EXPTS),
 
     expand(path.join(DATA, "bt2", SPECIES, T0_EXPT, FASTA_TYPE, "{sample}.bam"),
       sample = T0_SAMPLES), 
     
     expand(path.join(DATA, "bigwigs", SPECIES, "bt2", FASTA_TYPE, T0_EXPT, "{sample}_{orient}.bw"),
        sample = T0_SAMPLES,
-       orient = len(T0_SAMPLES) * ["fwd", "rev"]),
+       orient = ["fwd", "rev"]),
      
-    #intron mask file
     path.join(DBASES, SPECIES, "bt2", MSKED_FASTA + ".1.bt2"),
     
-    expand(path.join(DATA, "bt2", SPECIES, "{expt}", MSKED_FASTA, "{sample}.bam"),
-      zip,
-      sample = SAMPLES, 
-      expt = len(SAMPLES) * EXPTS),
+    expand(path.join(DATA, "bt2", SPECIES, EXPT, MSKED_FASTA, "{sample}.bam"),
+      sample = SAMPLES), 
 
-    expand(path.join(DATA, "salmon_bt2_masked", SPECIES, "{expt}",
+    expand(path.join(DATA, "salmon_bt2_masked", SPECIES, EXPT,
         MSKED_FASTA, "{sample}", "quant.sf"),
-           zip, 
-           sample = SAMPLES, 
-           expt = len(SAMPLES) * EXPTS), 
-    
-    # Also generate bigwigs from genome alignment 
-    expand(path.join(DATA,
-                     "bigwigs",
-                     SPECIES,
-                     "star",
-                     "{expt}",
-                     "{sample}_{orient}.bw"),
-       zip,
-       sample = SAMPLES,
-       expt = (len(SAMPLES) + 2) * EXPTS,
-       orient = (len(SAMPLES) + 2) * ["fwd", "rev"]),
+           sample = SAMPLES), 
+    traditional_alignment_outputs    
 
-    expand(path.join(DATA,
-                     "featurecounts",
-                     SPECIES,
-                     "{expt}",
-                     "{sample}_{feature}_counts.tsv"),
-       zip,
-       sample = SAMPLES,
-       expt = (len(SAMPLES) + 2) * EXPTS,
-       feature = (len(SAMPLES) + 2) * ["intron", "exon"]),
 
 include: "rules/qc.snake"    
 include: "rules/cutadapt.snake"
@@ -119,4 +107,3 @@ include: "rules/make_bigwigs.snake"
 include: "rules/bowtie2.snake"
 include: "rules/eisa.snake"
 include: "rules/featurecounts.snake"
-
