@@ -19,6 +19,7 @@ library(purrr)
 library(stringr)
 library(Biostrings)
 library(GenomicRanges)
+library(Rsamtools)
 
 outdir <- file.path(outpath, "eisa")
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
@@ -85,10 +86,10 @@ df <- getTx2Gene(grl)
 write_tsv(df, file.path(outdir,"tx2gene.tsv"))
 
 # write to top-level directory and eisa directory
-Biostrings::writeXStringSet(seq_strings, file.path(outpath,'eisa.fa'))
-Rsamtools::indexFa(file.path(outpath,'eisa.fa'))
+writeXStringSet(seq_strings, file.path(outpath,'eisa.fa'))
+indexFa(file.path(outpath,'eisa.fa'))
 
-Biostrings::writeXStringSet(seq_strings, file.path(outdir,'eisa.fa'))
-Rsamtools::indexFa(file.path(outdir,'eisa.fa'))
+writeXStringSet(seq_strings, file.path(outdir,'eisa.fa'))
+indexFa(file.path(outdir,'eisa.fa'))
 
 write_tsv(duplicate_seqs, file.path(outdir,"duplicated_seqs.tsv"))

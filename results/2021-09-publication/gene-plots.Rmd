@@ -1,7 +1,6 @@
 ---
 title: "Example gene snapshots"
 author: "Kent Riemondy RBI"
-date: "7/29/2021"
 output: html_document
 ---
 
@@ -844,7 +843,8 @@ genes_to_plot <- c(
   "hts",
   "RhoGEF3",
   "CycE",
-  "Siz")
+  "Siz",
+  "Adar")
 
 tx_figs <- file.path(fig_dir, "tx_ribo_figs")
 dir.create(tx_figs, showWarnings = FALSE)
