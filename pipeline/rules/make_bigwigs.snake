@@ -93,7 +93,7 @@ rule bt2_tx_bam_to_bigwig:
     strand_settings = _bedtools_strand_setting,
     genome =  path.join(DBASES, "{species}",  "{fasta}.fa.fai"),
   log:
-    path.join(DATA, "bigwigs", "logs", "{species}", "{expt}", "{sample}.txt") 
+    path.join(DATA, "bigwigs", "logs", "{species}", "{fasta}", "{expt}", "{sample}.txt") 
   message:
     "building bigwigs for {wildcards.sample} "
   threads: 6 
@@ -123,12 +123,19 @@ rule bt2_tx_bam_to_bigwig:
     bedSort {output.fwd}.tmp {output.fwd}.tmp
     bedSort {output.rev}.tmp {output.rev}.tmp
 
+    
+
     bedGraphToBigWig \
       {output.fwd}.tmp {params.genome} {output.fwd}
-    
-    bedGraphToBigWig \
-      {output.rev}.tmp {params.genome} {output.rev}
-    
+      
+    # handle potential empty files
+    if [ -s {output.rev}.tmp ]
+    then
+      bedGraphToBigWig {output.rev}.tmp {params.genome} {output.rev}
+    else
+      touch {output.rev}
+    fi
+   
     
     rm {output.fwd}.tmp {output.rev}.tmp {input.bam}.tmp
     """

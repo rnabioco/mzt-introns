@@ -55,7 +55,7 @@ rule eisa_mask:
       outdir = os.path.join(DBASES, "{species}"),
       r = os.path.join(RSRC, "mask_introns.R"),
     log:
-      os.path.join(DBASES, "{species}", "eisa", "logs", "mask.txt")
+      os.path.join(DBASES, "{species}", "{fasta}", "eisa", "logs", "mask.txt")
     message:
       "generating eisa reference with intron coverage masked "
     threads: 8
@@ -86,7 +86,7 @@ rule mask_fa:
       eisadir = os.path.join(DBASES, "{species}", "eisa"),
       outdir = os.path.join(DBASES, "{species}"),
     log:
-      os.path.join(DBASES, "{species}", "eisa", "logs", "mask_fasta.txt")
+      os.path.join(DBASES, "{species}", "{fasta}", "eisa", "logs", "mask_fasta.txt")
     message:
       "generating eisa reference with intron coverage masked "
     threads: 1

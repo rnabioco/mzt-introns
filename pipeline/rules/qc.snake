@@ -30,7 +30,7 @@ rule fastqc:
   params:
     out_dir = path.join(qc, "fastqc", "{species}", "{expt}"),
   log:
-    path.join(qc, "logs", "fastqc", "{expt}", "{sample}.txt") 
+    path.join(qc, "logs", "fastqc", "{species}", "{expt}", "{sample}.txt") 
   message:
     "fastqc analysis of {wildcards.sample} "
   threads:

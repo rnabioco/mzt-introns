@@ -71,7 +71,7 @@ rule cutadapt_paired:
   params:
     settings = _trim_settings,
   log:
-    path.join("{data}", "fastq", "trimmed", "logs", "{species}", "{sample}.txt") 
+    path.join("{data}", "fastq", "trimmed", "logs", "{species}", "{expt}", "{sample}.txt") 
   message:
     " trimming illumina adapters" 
   threads:

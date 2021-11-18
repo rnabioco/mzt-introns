@@ -22,7 +22,7 @@ library(GenomicRanges)
 library(Rsamtools)
 
 outdir <- file.path(outpath, "eisa")
-dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+dir.create(outdir, recursive = TRUE, showWarnings = TRUE)
 
 grl <- getFeatureRanges(
   gtf = gtf,

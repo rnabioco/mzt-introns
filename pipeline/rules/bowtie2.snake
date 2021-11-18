@@ -120,14 +120,13 @@ rule bt_idx:
       idx = path.join(DBASES, "{species}", "bt2", "{fasta}"),
     log:
       path.join(DBASES, "{species}", "bt2", "logs", "{fasta}_idx")
-    threads: 12
+    threads: 1
     resources: 
-        all_threads=12,
+        all_threads=1,
         mem_mb=MEM_ALLOC["DEFAULT"]
     shell:
       """
       bowtie2-build \
-        --threads {threads} \
         {input} \
         {params.idx} 
       """

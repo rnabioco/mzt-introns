@@ -1,5 +1,4 @@
 shell.executable("/bin/bash")
-shell.prefix("source ~/.bash_profile; ")
 
 from os import path
 from glob import glob

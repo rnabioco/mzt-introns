@@ -11,11 +11,11 @@ DBASES:
 
 # genome fasta file
 GENOMES:
-    drosophila: "../dbases/drosophila/ext/Drosophila_melanogaster.BDGP6.dna.toplevel.fa"
+    drosophila: "../dbases-test/drosophila/ext/Drosophila_melanogaster.BDGP6.dna.2L.fa"
 
 # transcript annotation in GTF format
 TRANSCRIPTS:
-    drosophila: "../dbases/drosophila/ext/Drosophila_melanogaster.BDGP6.84.gtf"
+    drosophila: "../dbases-test/drosophila/ext/Drosophila_melanogaster.BDGP6.84.2L.gtf"
 
 # intron annotation in SAF format (see results/00.Rmd to generate from
 # STAR alignments)
@@ -28,11 +28,11 @@ EXONS:
 
 # fasta index file
 CHROM_SIZES:
-    drosophila: "../dbases/drosophila/ext/Drosophila_melanogaster.BDGP6.dna.toplevel.fa.fai"
+    drosophila: "../dbases-test/drosophila/ext/Drosophila_melanogaster.BDGP6.dna.2L.fa.fai"
 
 # Path to star index
 GENOME_DIRS:
-    drosophila: "../dbases/drosophila/star/BDGP6"
+    drosophila: "../dbases-test/drosophila/star/BDGP6"
 
 # experiment specific settings
 # trim: settings for cutadapt
