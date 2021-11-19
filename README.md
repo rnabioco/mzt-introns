@@ -10,9 +10,7 @@ This repo contains a snakemake pipeline (`pipeline`) to align and quantify intro
 
 ## Dependencies
 
-The pipelines uses a mix of command line tools and R packages (listed here). To ease installation a docker container is provided with all prerequisites installed. 
-
-To use on your own data please see the instructions (`docker/README.md`)
+The pipelines uses a mix of command line tools and R packages (listed in `pipeline/README.md`). To ease use of the pipeline, a docker image is provided with all prerequisites installed, please see the instructions (`docker/README.md`).
 
 ## Inputs
 Short read RNA-Seq data from a developmental timecourse, either single or paired-end format.
