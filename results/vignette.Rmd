@@ -1,9 +1,6 @@
 ---
 title: "MZT differential expression vignette"
-author: "Kent Riemondy RBI"
 date: '`r Sys.Date()`'
-knit: (function(inputFile, encoding) {
-  rmarkdown::render(inputFile, encoding = encoding, output_dir = "html") })
 output: 
   html_document:
     code_folding: hide
@@ -13,7 +10,9 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,
+                      warning = FALSE)
 ```
 
 
@@ -30,7 +29,10 @@ library(tximport)
 library(DESeq2)
 ```
 
-## Approach
+
+This vignette will demonstrate how to use the salmon output files to classify trasncripts into maternal, maternal and zygotic, or zygotic. 
+
+For this vignette the testdata set comprised of 5 timepoints from drosophila development will be examined. These test files were downsampled to reduce the file size and only mapped to the `2L` chromosome. 
 
 ```{r}
 salmon_dir <- "../data-test/salmon_bt2_masked/drosophila/TESTDATA/eisa_masked/"
@@ -85,7 +87,9 @@ gene2intron <- read_tsv("../dbases-test/drosophila/eisa/tx2gene.tsv")
 ```
 
 
-## Plot pre-mRNA ratios
+## Examine intron signal across timepoints 
+
+As a quick QC check, the proportion of reads assigned to introns will be examined across the developmental timepoints. The expectation is that intron signal will be minimal at the 0-1 hour time point, due to the masking of any intron signal at this stage, and that intron signal will increase coincident with the induction of zygotic transcription. 
 
 ```{r}
 salmon_files <- file.path("../data-test",
@@ -108,8 +112,8 @@ tpms <- rownames_to_column(tpms, "feature_id") %>%
                              "intron",
                              "exon"),
          gene_id = str_remove(feature_id, "-I[0-9]*$")) %>% 
-  select(-feature_id) %>% 
-  pivot_longer(cols = -c(count_type, gene_id),
+#  select(-feature_id) %>% 
+  pivot_longer(cols = -c(count_type, gene_id, feature_id),
                names_to = "run",
                values_to = "TPM")
 
@@ -117,10 +121,11 @@ tpms <- left_join(tpms, mdata, by = c('run' = 'sr_ids'))
 ```
 
 ```{r}
-tpm_summary <- pivot_wider(tpms, 
-                           names_from = count_type, 
-                           values_from = TPM) %>% 
-  na.omit() %>% 
+tpm_summary <- tpms %>%
+  select(-feature_id) %>%
+  pivot_wider(names_from = count_type,
+              values_from = TPM) %>%
+  na.omit() %>%
   mutate(intron_ratio  = intron / (intron + exon))
 
 ## calc mean primary ratio across developmental stages
@@ -157,9 +162,9 @@ p
 ```
 
 
-## DE testing
+## Differential expression testing
 
-Run deseq2 comaring the post-mzt samples to the pre-mzt.
+Next DESeq2 will be used to compare the expression of spliced transcripts and introns in the post-mzt samples to the pre-mzt. For this analysis intron and splice transcript signals will be aggregated to gene-level estimates. Additionally the samples will be binned into two stages for comparison: maternal representing the pre-major ZGA wave stages, and zygotic, represent samples at or after the major wave. Datasets with additional time points and replicates would benefit from using a timecourse or ANOVA-like approach that would treat each timepoint independently rather than a two-state comparison. 
 
 ```{r}
 mdata$mzt <- ifelse(mdata$stage %in% c("0-1 hr embryo", "1-2 hr embryo"),
@@ -172,7 +177,7 @@ ddobj <- DESeq(ddobj)
 
 res <- results(ddobj, 
                    name = "mzt_zygotic_vs_maternal", 
-                   tidy = T) %>% 
+                   tidy = TRUE) %>% 
   as_tibble() %>% 
   mutate(count_type = ifelse(str_detect(row, "-I[0-9]*$"), 
                              "intron",
@@ -195,6 +200,85 @@ ggplot(out_tbl, aes(baseMean, log2FoldChange)) +
   scale_x_log10(labels = scales::comma) +
   scale_color_manual(values = c("grey", "blue"))
 ```
+
+
+## Select catagories
+
+Using the outputs from DESeq2 we can now classify genes to maternal, maternal + zygotic, or zygotic.  
+
+```{r}
+fold_change_cutoff <- 1
+padj_cutoff <- 0.05
+tpm_cut_off <- 1
+
+mean_tpms <- tpms %>% 
+  mutate(gene_id = feature_id) %>% 
+  group_by(gene_id, stage) %>% 
+  summarize(mean_tpm = mean(TPM)) %>% 
+  group_by(gene_id) %>% 
+  mutate(max_tpm = max(mean_tpm)) %>% 
+  pivot_wider(names_from = stage, values_from = mean_tpm) %>% 
+  inner_join(res, by = c("gene_id" = "row"))
+
+exonic_df <- mean_tpms %>% 
+  filter(!str_detect(gene_id, "-I$")) 
+
+intronic_df <- mean_tpms %>% 
+  filter(str_detect(gene_id, "-I$")) 
+
+maternal_genes <- exonic_df %>% 
+    filter(`0-1 hr embryo` >= tpm_cut_off) %>% 
+    pull(gene_id) %>% 
+    unique()
+  
+zygotic_genes_exon <- exonic_df %>% 
+    filter(padj < padj_cutoff, 
+           log2FoldChange > fold_change_cutoff,
+           max_tpm > tpm_cut_off) %>% 
+    arrange(padj) %>% 
+    pull(gene_id) %>% 
+    unique()
+  
+zygotic_genes_intron <- intronic_df %>% 
+    filter(padj < padj_cutoff, 
+           log2FoldChange > fold_change_cutoff,
+           max_tpm > tpm_cut_off) %>% 
+    arrange(padj) %>%
+    pull(gene_id) %>% 
+    unique()
+  
+all_zygotic_combined <- unique(union(zygotic_genes_exon,
+                                       str_remove(zygotic_genes_intron, 
+                                                  "-I[0-9]*$") ))
+  
+pure_zygotic_combined <- setdiff(all_zygotic_combined, maternal_genes)
+  
+mat_zyg_combined<- intersect(all_zygotic_combined, maternal_genes)
+  
+pure_maternal <- setdiff(setdiff(maternal_genes, 
+                                 mat_zyg_combined),
+                           all_zygotic_combined)
+  
+  
+gene_lists <- lst(
+  all_zygotic_combined,
+  pure_zygotic_combined,
+  mat_zyg_combined,
+  pure_maternal
+)
+  
+gene_df <- lapply(seq_along(gene_lists), function(x) {
+  data.frame(gene_id = gene_lists[[x]],
+             mzt_class = names(gene_lists)[x])}) %>% 
+  do.call(rbind, .)  %>% 
+    left_join(gene2symbol, by = "gene_id")
+  
+table(gene_df$mzt_class)
+```
+
+
+
+## Session info
 
 ```{r}
 sessionInfo()
