@@ -11,10 +11,14 @@ jobs:
       
     - name: Download references
       run: |
-        cd dbases-test/drosophila/ext; bash ./dl_dbases.sh; cd -
+        cd dbases-test/drosophila/ext; bash ./dl_dbases.sh; ls -l ; cd -
     - name: Test pipeline
       run: |
-        cd pipeline; snakemake -npr --configfile config-test.yaml
+        cd pipeline; snakemake -npr --configfile config-test.yaml ; cd -
+        
+    - name: Run pipeline
+      run: | 
+        cd pipeline; bash snakecharmer-local.sh
     
         
         

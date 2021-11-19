@@ -7,8 +7,8 @@ set -o nounset -o pipefail -o errexit -x
 
 snakemake \
     --snakefile Snakefile \
-    --jobs 15 \
-    --resources all_threads=7 \
+    --jobs 1 \
+    --resources all_threads=1 \
     --latency-wait 50 \
     --printshellcmds \
     --rerun-incomplete  \
