@@ -3,7 +3,7 @@ on: [push]
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: kriemo:mzt-introns
+    container: kenter/mztintrons:latest
     steps:
     - name: Download references
       run: |
