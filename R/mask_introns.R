@@ -53,6 +53,9 @@ fwd_df <- map_dfr(fwd_bws,
                   ~read_bigwig(.x, set_strand = "+")) 
 
 chunk_ivls <- function(df, n) {
+  if (n == 1){
+    return(list(df))
+  }
   chroms <- unique(df$chrom)
   chrom_splits <- split(chroms, cut(seq_along(chroms), n, labels = FALSE))
   map(chrom_splits, 
