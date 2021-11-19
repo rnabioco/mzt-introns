@@ -17,8 +17,7 @@ GENOMES:
 TRANSCRIPTS:
     drosophila: "../dbases-test/drosophila/ext/Drosophila_melanogaster.BDGP6.84.2L.gtf"
 
-# intron annotation in SAF format (see results/00.Rmd to generate from
-# STAR alignments)
+# intron annotation in SAF format 
 # leave blank if traditional alignment approach not needed
 INTRONS:
     drosophila: ""
@@ -30,7 +29,8 @@ EXONS:
 CHROM_SIZES:
     drosophila: "../dbases-test/drosophila/ext/Drosophila_melanogaster.BDGP6.dna.2L.fa.fai"
 
-# Path to star index
+# Path to star index, or desired path for star index to be built by pipeline,
+# only built if traditional alignment approach is needed
 GENOME_DIRS:
     drosophila: "../dbases-test/drosophila/star/BDGP6"
 

@@ -30,4 +30,5 @@ pipeline/logs/*
 *.xls*
 *.tsv*
 *.fa
+*.fa.fai
 *.saf
