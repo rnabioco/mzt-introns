@@ -76,7 +76,7 @@ These can be used for differential expression testing to identify de novo transc
 
 ## More information
 
-Please see our manuscript for additional details:  
+Please see our manuscript and associated repository https://github.com/rnabioco/mzt-introns-manuscript for additional details:  
 
 >
 Kent Riemondy, Jesslyn Henrikson and Olivia S. Rissland. Intron dynamics reveal principles of 
