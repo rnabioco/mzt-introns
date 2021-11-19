@@ -1,21 +1,39 @@
+# Snakemake pipeline for quantifying intron signal in MZT timecourse libraries
 
-## mzt-introns  
+## Example usage
 
-[![github-actions](https://github.com/rnabioco/mzt-introns/actions/workflows/github-actions.yaml/badge.svg)](https://github.com/rnabioco/mzt-introns/actions/workflows/github-actions.yaml)  
+This pipeline is designed to be run on a server and was tested on a cluster set up with LSF. It can also be run as a standalone pipeline without using a cluster, if sufficient memory/space is available. 
 
-Characterizing the maternal to zygotic transition using intronic read signals
-to define zygotic transcription.  
+1) Clone the repository
 
-This repo contains a snakemake pipeline (`pipeline`) to align and quantify intronic and exonic signals from RNA-seq data using salmon. See `pipeline/README.md` for how to use this pipeline in your own work. 
+```bash
+git clone git@github.com:rnabioco/mzt-introns
+```
 
-## Dependencies
+2) Download reference genome, transcriptome, and transcript annotations. If you already have these then they can be specified in the config file. If not see `dbases/drosophila/ext/dl_dbases.sh` to download references for Drosophila. 
 
-The pipelines uses a mix of command line tools and R packages (listed here). To ease installation a docker container is provided with all prerequisites installed. 
+3) Download raw data: For this example we will use a test dataset provided in the repository (`raw_data/drosophila/TESTDATA/`). See an example download script from `data/raw_data/drosophila/RISSLAND/dl_data.sh` to download the original rRNA depleted RNA-seq libraries prepared from drosophila embryos at different stages pre and post ZGA.Note requires `sra-toolkit` to download data. Also note that the fastqs should be placed into a subdirectory
+named indicating the species and name of the experiment, for example `raw_data/drosophila/RISSLAND`. If you'd like the 
+output data to be name `my_project`, then the fastqs should be placed in `my_project/raw_data/drosophila/RISSLAND`
 
-To use on your own data please see the instructions (`docker/README.md`)
+4) Prepare a config file and lib_params file containing information about the RNA-seq libraries. For these
+data the config file `config-test.yaml` and params file `test_lib_params.tsv` are
+for these example data. Change the `DATA` directory and path to `LIB_PARAMS` as needed.
 
-## Inputs
-Short read RNA-Seq data from a developmental timecourse, either single or paired-end format.
+5) Test the snakemake pipeline. This command should show all of the jobs that will be executed 
+
+```bash
+snakemake -npr --configfile config-test.yaml
+```
+
+6a) Run the pipeline (local mode, no cluster support)
+
+```bash
+snakemake --configfile your-config-file.yaml
+```
+
+
+6b) Run the pipeline on an LSF compatible cluster. See `snakemake.sh` for an example script to run snakemake on a cluster.
 
 ## Outputs
 
@@ -76,12 +94,35 @@ Here are the output files from the pipeline for the test dataset included in thi
 
 These can be used for differential expression testing to identify de novo transcription based on intronic signals.  We provide an example of how to use DESeq2 to examine differential expression in a vignette (`results/vignette.Rmd`).
 
-## More information
 
-Please see our manuscript for additional details:  
+## Requirements
+  The following dependencies are used in this pipeline. These can be installed manually, or alternatively, a docker image is provided with all of the necessary dependencies (`docker/README.md`). 
+  
+### Command-line 
 
->
-Kent Riemondy, Jesslyn Henrikson and Olivia S. Rissland. Intron dynamics reveal principles of 
-gene regulation during the maternal-to-zygotic transition. To be submitted. XXXX
->
+    - snakemake 
+    - fastqc
+    - salmon 
+    - STAR
+    - Bowtie2 
+    - samtools 
+    - bedtools
+    - deeptools
+    - ucsc Kent tools
 
+### R packages
+
+    - R (>= 4.0)
+    - eisaR
+    - readr
+    - dplyr
+    - purrr
+    - stringr
+    - Biostrings
+    - GenomicRanges
+    - Rsamtools
+    - Rsubread
+    - valr
+    - rtracklayer
+    - doParallel
+    
