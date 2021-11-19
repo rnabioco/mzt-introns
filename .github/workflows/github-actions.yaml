@@ -3,8 +3,12 @@ on: [push]
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: kenter/mztintrons:latest
+    container: 
+      image: kenter/mztintrons:latest
     steps:
+    - name: Checkout Project
+      uses: actions/checkout@v2
+      
     - name: Download references
       run: |
         cd dbases-test/drosophila/ext; bash ./dl_dbases.sh; cd -
