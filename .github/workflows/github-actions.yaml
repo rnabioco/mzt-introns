@@ -1,0 +1,16 @@
+name: github-actions
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: kriemo:mzt-introns
+    steps:
+    - name: Download references
+      run: |
+        cd dbases-test/drosophila/ext; bash ./dl_dbases.sh; cd -
+    - name: Test pipeline
+      run: |
+        cd pipeline; snakemake -npr --configfile config-test.yaml
+    
+        
+        
