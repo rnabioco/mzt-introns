@@ -80,6 +80,6 @@ Please see our manuscript and associated repository https://github.com/rnabioco/
 
 >
 Kent Riemondy, Jesslyn Henrikson and Olivia S. Rissland. Intron dynamics reveal principles of 
-gene regulation during the maternal-to-zygotic transition. To be submitted. XXXX
+gene regulation during the maternal-to-zygotic transition. https://doi.org/10.1101/2021.12.01.470832 
 >
 
