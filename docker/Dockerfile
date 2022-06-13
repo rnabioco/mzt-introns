@@ -25,12 +25,12 @@ RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86
     echo ". /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc
 
 ## install cmd tools with conda
-
+COPY environment.yaml .
 RUN /opt/conda/bin/conda config --add channels default && \
     /opt/conda/bin/conda config --add channels bioconda && \
     /opt/conda/bin/conda config --add channels conda-forge && \
-    conda env update -n base -f environment.yaml && \
-    conda clean -afy
+    /opt/conda/bin/conda env update -n base -f environment.yaml && \
+    /opt/conda/bin/conda clean -afy
 
 # Install R packages from cran
 RUN R -e "install.packages(c('dplyr', 'purrr', 'BiocManager', 'readr', 'stringr', 'valr', 'purrr', 'Matrix', 'RColorBrewer', 'cowplot', 'doParallel', 'ggplot2', 'ggrepel', 'here', 'jsonlite', 'readxl', 'tibble', 'tidyr', 'viridis', 'eulerr'), repos='http://cran.rstudio.com/')"
