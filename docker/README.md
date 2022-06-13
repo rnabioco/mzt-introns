@@ -21,7 +21,7 @@ The docker container also contains Rstudio to enable exploration of the data in 
 
 Get the image
 ```bash
-docker pull kenter/mztintrons
+docker pull rnabioco/mztintrons
 ```
 
 Start a container
@@ -32,17 +32,17 @@ docker run \
   -p 8787:8787 \ # port that rstudio will be active on, navigate browser to http://localhost:8787/ to login
   -v /path/to/mztintrons:/home/rstudio/ \ # path to local directory with pipeline and data 
   -it \ 
-  kenter/mztintrons
+  rnabioco/mzt-introns
 ``` 
 
-Once you have a container running, you can get acess a bash shell to run snakemake in two ways:  
+Once you have a container running, you can get access a bash shell to run snakemake in two ways:  
 
 1) login to rstudio, and use the terminal in the IDE (e.g. navigate to http://localhost:8787/, then login with username rstudio, password rna)  
 
 2) start a terminal in the docker container.  
 
 ```bash
-docker run -it -v /path/to/mztintrons:/home/rstudio/ kenter/mztintrons bash
+docker run -it -v /path/to/mztintrons:/home/rstudio/ rnabioco/mzt-introns bash
 ```
 
 ## Test snakemake
