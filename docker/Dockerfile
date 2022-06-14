@@ -32,12 +32,11 @@ RUN /opt/conda/bin/conda config --add channels default && \
     /opt/conda/bin/conda env update -n base -f environment.yaml && \
     /opt/conda/bin/conda clean -afy
 
-# Install R packages from cran
-RUN R -e "install.packages(c('dplyr', 'purrr', 'BiocManager', 'readr', 'stringr', 'valr', 'purrr', 'Matrix', 'RColorBrewer', 'cowplot', 'doParallel', 'ggplot2', 'ggrepel', 'here', 'jsonlite', 'readxl', 'tibble', 'tidyr', 'viridis', 'eulerr'), repos='http://cran.rstudio.com/')"
-
 ## Install Bioconductor packages
-RUN echo "BiocManager::install(c(\"Biostrings\", \"GenomicRanges\", \"GenomicAlignments\", \"GenomicFeatures\", \"Gviz\", \"eisaR\"), suppressUpdates=TRUE, ask=FALSE)" | R --vanilla
-RUN echo "BiocManager::install(c(\"ComplexHeatmap\", \"DESeq2\", \"rtracklayer\", \"tximport\", \"Rsubread\", \"Rhtslib\", \"zlibbioc\"), suppressUpdates=TRUE, ask=FALSE)" | R --vanilla
+RUN R -e 'BiocManager::install(c("Biostrings", "GenomicRanges", "GenomicAlignments", "GenomicFeatures", "Gviz", "eisaR", "ComplexHeatmap", "DESeq2", "rtracklayer", "tximport", "Rsubread", "Rhtslib", "zlibbioc", "BiocParallel"), suppressUpdates=TRUE, ask=FALSE, version = "3.15")'
+
+# Install R packages from cran
+RUN R -e "install.packages(c('dplyr', 'purrr', 'readr', 'stringr', 'valr', 'purrr', 'Matrix', 'RColorBrewer', 'cowplot', 'doParallel', 'ggplot2', 'ggrepel', 'here', 'jsonlite', 'readxl', 'tibble', 'tidyr', 'viridis', 'eulerr'), repos='http://cran.rstudio.com/')"
 
 # Define working directory.
 WORKDIR /home/rstudio
