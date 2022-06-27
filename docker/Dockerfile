@@ -44,6 +44,7 @@ RUN mkdir -p renv
 COPY .Rprofile .Rprofile
 COPY renv/activate.R renv/activate.R
 COPY renv/settings.dcf renv/settings.dcf
-RUN R -e "renv::restore()"
+RUN chown -R rstudio . \
+ && sudo -u rstudio R -e "renv::restore()"
 
 #COPY --chown=rstudio:rstudio . /home/rstudio/
