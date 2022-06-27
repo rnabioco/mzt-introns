@@ -32,12 +32,18 @@ RUN /opt/conda/bin/conda config --add channels default && \
     /opt/conda/bin/conda env update -n base -f environment.yaml && \
     /opt/conda/bin/conda clean -afy
 
-## Install Bioconductor packages
-RUN R -e 'BiocManager::install(c("Biostrings", "GenomicRanges", "GenomicAlignments", "GenomicFeatures", "Gviz", "eisaR", "ComplexHeatmap", "DESeq2", "rtracklayer", "tximport", "Rsubread", "Rhtslib", "zlibbioc", "BiocParallel"), suppressUpdates=TRUE, ask=FALSE, version = "3.15")'
-
-# Install R packages from cran
-RUN R -e "install.packages(c('dplyr', 'purrr', 'readr', 'stringr', 'valr', 'purrr', 'Matrix', 'RColorBrewer', 'cowplot', 'doParallel', 'ggplot2', 'ggrepel', 'here', 'jsonlite', 'readxl', 'tibble', 'tidyr', 'viridis', 'eulerr'), repos='http://cran.rstudio.com/')"
-
-# Define working directory.
 WORKDIR /home/rstudio
-COPY --chown=rstudio:rstudio . /home/rstudio/
+
+## Use renv to install specific versions specified in the renv.lock file
+COPY renv.lock renv.lock
+ENV RENV_VERSION 0.15.5
+RUN R -e "install.packages('remotes', repos = c(CRAN = 'https://cloud.r-project.org'))" && \
+    R -e "remotes::install_github('rstudio/renv@${RENV_VERSION}')"
+
+RUN mkdir -p renv
+COPY .Rprofile .Rprofile
+COPY renv/activate.R renv/activate.R
+COPY renv/settings.dcf renv/settings.dcf
+RUN R -e "renv::restore()"
+
+#COPY --chown=rstudio:rstudio . /home/rstudio/
