@@ -1,4 +1,5 @@
-## Install Bioconductor packages
+install.packages("BiocManager")
+
 BiocManager::install(c("Biostrings",
                        "GenomicRanges",
                        "GenomicAlignments", 
