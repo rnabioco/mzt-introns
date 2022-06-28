@@ -35,16 +35,22 @@ RUN /opt/conda/bin/conda config --add channels default && \
 WORKDIR /home/rstudio
 
 ## Use renv to install specific versions specified in the renv.lock file
-COPY renv.lock renv.lock
 ENV RENV_VERSION 0.15.5
 RUN R -e "install.packages('remotes', repos = c(CRAN = 'https://cloud.r-project.org'))" && \
-    R -e "remotes::install_github('rstudio/renv@${RENV_VERSION}')"
+    R -e "remotes::install_github('rstudio/renv@${RENV_VERSION}')" 
 
-RUN mkdir -p renv
-COPY .Rprofile .Rprofile
-COPY renv/activate.R renv/activate.R
-COPY renv/settings.dcf renv/settings.dcf
-RUN chown -R rstudio . \
- && sudo -u rstudio R -e "renv::restore()"
+RUN mkdir -p docker
+COPY r-pkgs.R docker/r-pkgs.R
+COPY dependencies.R docker/dependencies.R
+
+RUN cd docker && \
+    R -e "renv::init(bioconductor = '3.15')" && \
+    R -e "source('r-pkgs.R')" && \
+    R -e "renv::snapshot(type = 'implicit', prompt = FALSE)"
+
+#COPY renv/activate.R renv/activate.R
+#COPY renv/settings.dcf renv/settings.dcf
+#RUN chown -R rstudio . \
+# && sudo -u rstudio R -e "renv::restore()"
 
 #COPY --chown=rstudio:rstudio . /home/rstudio/
