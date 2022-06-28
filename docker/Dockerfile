@@ -32,6 +32,9 @@ RUN /opt/conda/bin/conda config --add channels default && \
     /opt/conda/bin/conda env update -n base -f environment.yaml && \
     /opt/conda/bin/conda clean -afy
 
+# set libpath globally to renv library
+RUN echo ".libPaths('/home/rstudio/renv/library/R-4.2/x86_64-pc-linux-gnu')" >> .Rprofile
+
 ## Use renv to install specific versions specified in the renv.lock file
 ENV RENV_VERSION 0.15.5
 RUN R -e "install.packages('remotes', repos = c(CRAN = 'https://cloud.r-project.org'))" && \
