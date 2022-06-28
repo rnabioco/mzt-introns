@@ -33,4 +33,5 @@ install.packages(c('dplyr',
                    'tibble', 
                    'tidyr', 
                    'viridis',
-                   'eulerr')) 
+                   'eulerr'),
+                 repos='http://cran.rstudio.com/') 
