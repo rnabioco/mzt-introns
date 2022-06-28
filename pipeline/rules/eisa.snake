@@ -23,7 +23,7 @@ rule eisa_prep:
         mem_mb=MEM_ALLOC["DEFAULT"]
     shell:
         """
-      Rscript --vanilla {params.r} {input.gtf} {input.fa} {wildcards.species} {params.outdir}
+      Rscript {params.r} {input.gtf} {input.fa} {wildcards.species} {params.outdir}
       """
 
 def _get_t0_libs(wildcards):
@@ -64,7 +64,7 @@ rule eisa_mask:
         mem_mb=MEM_ALLOC["SALMON"]
     shell:
       """
-      Rscript --vanilla \
+      Rscript  \
               {params.r} \
               {params.eisadir} \
               {wildcards.species} \
