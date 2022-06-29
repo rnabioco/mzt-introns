@@ -33,15 +33,15 @@ RUN /opt/conda/bin/conda config --add channels default && \
     /opt/conda/bin/conda clean -afy
 
 # install packages to system 
-ENV RENV_VERSION 0.15.5
-RUN R -e "install.packages('remotes', repos = c(CRAN = 'https://cloud.r-project.org'))" && \
-    R -e "remotes::install_github('rstudio/renv@${RENV_VERSION}')" && \
-    R -e "source('r-pkgs.R')" && \
-    mkdir -p /home/rstudio/renv-pkgs
-    
+RUN mkdir -p /home/rstudio/renv-pkgs
 # use renv to make a lockfile based on packages
 COPY r-pkgs.R /home/rstudio/renv-pkgs/r-pkgs.R
 COPY dependencies.R /home/rstudio/renv-pkgs/dependencies.R
+
+ENV RENV_VERSION 0.15.5
+RUN R -e "install.packages('remotes', repos = c(CRAN = 'https://cloud.r-project.org'))" && \
+    R -e "remotes::install_github('rstudio/renv@${RENV_VERSION}')" && \
+    R -e "source('/home/rstudio/renv-pkgs/r-pkgs.R')" 
 
 RUN cd /home/rstudio/renv-pkgs/ && \
     R -e "renv::init(bare = TRUE, bioconductor = '3.15')" 
