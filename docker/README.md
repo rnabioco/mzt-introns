@@ -51,10 +51,13 @@ docker run -it -v /path/to/mztintrons:/home/rstudio/ rnabioco/mzt-introns bash
 snakemake -npr --configfile config-test.yaml
 ```
 
-# Additional resources
+## Additional resources
 
  If you’ve never used docker here are some useful tutorials on using docker:
  
  https://bioconductor.org/help/docker/#quickstart  
  https://jsta.github.io/r-docker-tutorial/  
  https://replikation.github.io/bioinformatics_side/docker/docker/#important-commands  
+
+## Software versions
+ The software versions used in this docker container are listed in the `environment.yaml` file (python + command line tools) and in the `renv.lock` file (R packages). These files can be used to install the software locally, outside the docker container, using `conda` and `renv` respectively.  
