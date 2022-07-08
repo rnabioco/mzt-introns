@@ -24,10 +24,10 @@ TRANSCRIPTS:
 # intron annotation in SAF format 
 # leave blank if traditional alignment approach not needed
 INTRONS:
-    drosophila: ""
+    ""
 
 EXONS:
-    drosophila: ""
+    ""
 
 # fasta index file
 CHROM_SIZES:
