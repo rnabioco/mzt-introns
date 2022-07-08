@@ -1,6 +1,10 @@
 # config for MZT intron quantification snakemake pipeline #
 
 
+# directory with raw fastqs
+RAWDATA:
+  "../data-test/raw_data/drosophila/TESTDATA"
+
 # directory with fastqs and generated data
 DATA: 
     "../data-test"
@@ -10,12 +14,12 @@ DBASES:
     "../dbases-test" 
 
 # genome fasta file
-GENOMES:
-    drosophila: "../dbases-test/drosophila/ext/Drosophila_melanogaster.BDGP6.dna.2L.fa"
+GENOME:
+    "../dbases-test/drosophila/ext/Drosophila_melanogaster.BDGP6.dna.2L.fa"
 
 # transcript annotation in GTF format
 TRANSCRIPTS:
-    drosophila: "../dbases-test/drosophila/ext/Drosophila_melanogaster.BDGP6.84.2L.gtf"
+    "../dbases-test/drosophila/ext/Drosophila_melanogaster.BDGP6.84.2L.gtf"
 
 # intron annotation in SAF format 
 # leave blank if traditional alignment approach not needed
@@ -27,12 +31,12 @@ EXONS:
 
 # fasta index file
 CHROM_SIZES:
-    drosophila: "../dbases-test/drosophila/ext/Drosophila_melanogaster.BDGP6.dna.2L.fa.fai"
+    "../dbases-test/drosophila/ext/Drosophila_melanogaster.BDGP6.dna.2L.fa.fai"
 
 # Path to star index, or desired path for star index to be built by pipeline,
 # only built if traditional alignment approach is needed
-GENOME_DIRS:
-    drosophila: "../dbases-test/drosophila/star/BDGP6"
+GENOME_DIR:
+    "../dbases-test/drosophila/star/BDGP6"
 
 # experiment specific settings
 # trim: settings for cutadapt
@@ -43,13 +47,13 @@ GENOME_DIRS:
 # bt_map: additional settings for bowtie2 mapping  
 # fq: suffix for R1 and R2
 #
-TESTDATA:
+CMDPARAMS:
     trim: " -q 10 -a 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC' "
     intron_count: " --minOverlap 10 -s 2 "
     exon_count: " --fracOverlap 1 -s 2 "
-    map: " --fldMean 200 --fldSD 20 --libType 'SR' "
+    salmon: " --fldMean 200 --fldSD 20 --libType 'SR' "
     stranded: "reverse"
-    bt_map: " --nofw "
+    bowtie: " --nofw "
     fq: 
         - ".fastq.gz"
 
@@ -69,6 +73,10 @@ SRC:
 # directory for R scripts
 RSRC:
   "../R"
+
+# path to singularity .sif file to use 
+SINGULARITY:
+  ""
 
 # memory allocation (MB) for default rules, or higher memory processes
 MALLOC:
