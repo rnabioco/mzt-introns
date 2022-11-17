@@ -6,7 +6,7 @@ channels:
   - defaults
 dependencies:
   - python=3.9.13
-  - snakemake=7.8.2
+  - snakemake=7.18.1
   - drmaa=0.7.9
   - cutadapt=4.1
   - star=2.7.10a
