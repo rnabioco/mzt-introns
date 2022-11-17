@@ -47,7 +47,6 @@ RUN cd /home/rstudio/renv-pkgs/ && \
     R -e "renv::init(bare = TRUE, bioconductor = '3.15')" 
     
 RUN cd /home/rstudio/renv-pkgs/ && \
-    R -e "source('r-pkgs.R')" && \
     R -e "renv::snapshot(type = 'implicit', prompt = FALSE)"
 
 WORKDIR /home/rstudio
