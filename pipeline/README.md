@@ -97,29 +97,8 @@ These can be used for differential expression testing to identify de novo transc
   
 ### Command-line 
 
-    - snakemake 
-    - fastqc
-    - salmon 
-    - STAR
-    - Bowtie2 
-    - samtools 
-    - bedtools
-    - deeptools
-    - ucsc Kent tools
+See [environment.yaml](https://github.com/rnabioco/mzt-introns/blob/main/docker/environment.yaml) for a list of software.
 
 ### R packages
 
-    - R (>= 4.0)
-    - eisaR
-    - readr
-    - dplyr
-    - purrr
-    - stringr
-    - Biostrings
-    - GenomicRanges
-    - Rsamtools
-    - Rsubread
-    - valr
-    - rtracklayer
-    - doParallel
-    
+See [r-pkgs.R](https://github.com/rnabioco/mzt-introns/blob/main/docker/r-pkgs.R) for a list of R packages required

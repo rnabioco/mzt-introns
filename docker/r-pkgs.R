@@ -1,5 +1,5 @@
 install.packages("BiocManager")
-
+BiocManager::install(version = '3.15')
 BiocManager::install(c("Biostrings",
                        "GenomicRanges",
                        "GenomicAlignments", 
