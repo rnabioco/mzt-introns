@@ -12,9 +12,7 @@ git clone git@github.com:rnabioco/mzt-introns
 
 2) Download reference genome, transcriptome, and transcript annotations. If you already have these then they can be specified in the config file. If not see `dbases/drosophila/ext/dl_dbases.sh` to download references for Drosophila. 
 
-3) Download raw data: For this example we will use a test dataset provided in the repository (`raw_data/drosophila/TESTDATA/`). See an example download script from `data/raw_data/drosophila/RISSLAND/dl_data.sh` to download the original rRNA depleted RNA-seq libraries prepared from drosophila embryos at different stages pre and post ZGA.Note requires `sra-toolkit` to download data. Also note that the fastqs should be placed into a subdirectory
-named indicating the species and name of the experiment, for example `raw_data/drosophila/RISSLAND`. If you'd like the 
-output data to be name `my_project`, then the fastqs should be placed in `my_project/raw_data/drosophila/RISSLAND`
+3) Download raw data: For this example we will use a test dataset provided in the repository (`raw_data/drosophila/TESTDATA/`). See an example download script from `data/raw_data/drosophila/RISSLAND/dl_data.sh` to download the original rRNA depleted RNA-seq libraries prepared from drosophila embryos at different stages pre and post ZGA.Note requires `sra-toolkit` to download data. 
 
 4) Prepare a config file and lib_params file containing information about the RNA-seq libraries. For these
 data the config file `config-test.yaml` and params file `test_lib_params.tsv` are
@@ -31,7 +29,6 @@ snakemake -npr --configfile config-test.yaml
 ```bash
 snakemake --configfile your-config-file.yaml
 ```
-
 
 6b) Run the pipeline on an LSF compatible cluster. See `snakemake.sh` for an example script to run snakemake on a cluster.
 

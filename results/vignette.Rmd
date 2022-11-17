@@ -35,7 +35,7 @@ This vignette will demonstrate how to use the salmon output files to classify tr
 For this vignette the testdata set comprised of 5 timepoints from drosophila development will be examined. These test files were downsampled to reduce the file size and only mapped to the `2L` chromosome. 
 
 ```{r}
-salmon_dir <- "../data-test/salmon_bt2_masked/drosophila/TESTDATA/eisa_masked/"
+salmon_dir <- "../data-test/salmon_bt2_masked/eisa_masked/"
 
 sr_ids <- c("SRR5469986.sub",
             "SRR5469988.sub",
@@ -83,7 +83,7 @@ gene2tx <- gtf %>%
    na.omit() %>%
    distinct()
 
-gene2intron <- read_tsv("../dbases-test/drosophila/eisa/tx2gene.tsv") 
+gene2intron <- read_tsv("../dbases-test/eisa/tx2gene.tsv") 
 ```
 
 
@@ -92,11 +92,7 @@ gene2intron <- read_tsv("../dbases-test/drosophila/eisa/tx2gene.tsv")
 As a quick QC check, the proportion of reads assigned to introns will be examined across the developmental timepoints. The expectation is that intron signal will be minimal at the 0-1 hour time point, due to the masking of any intron signal at this stage, and that intron signal will increase coincident with the induction of zygotic transcription. 
 
 ```{r}
-salmon_files <- file.path("../data-test",
-                   "salmon_bt2_masked", 
-                   "drosophila",
-                   "TESTDATA",
-                   "eisa_masked",
+salmon_files <- file.path(salmon_dir,
                    mdata$sr_ids,
                    "quant.sf")
 
@@ -112,7 +108,6 @@ tpms <- rownames_to_column(tpms, "feature_id") %>%
                              "intron",
                              "exon"),
          gene_id = str_remove(feature_id, "-I[0-9]*$")) %>% 
-#  select(-feature_id) %>% 
   pivot_longer(cols = -c(count_type, gene_id, feature_id),
                names_to = "run",
                values_to = "TPM")
