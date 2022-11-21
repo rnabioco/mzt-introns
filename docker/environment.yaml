@@ -16,5 +16,5 @@ dependencies:
   - salmon=1.8.0
   - fastqc=0.11.9
   - bowtie2=2.2.5
-  - ucsc-bedgraphtobigwig=v377
+  - ucsc-bedgraphtobigwig=377
   - ucsc-bedsort=377  
