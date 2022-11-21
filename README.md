@@ -3,8 +3,7 @@
 
 [![github-actions](https://github.com/rnabioco/mzt-introns/actions/workflows/github-actions.yaml/badge.svg)](https://github.com/rnabioco/mzt-introns/actions/workflows/github-actions.yaml)  
 
-Characterizing the maternal to zygotic transition using intronic read signals
-to define zygotic transcription.  
+Characterizing the maternal to zygotic transition using intronic read signals to define zygotic transcription.  
 
 This repo contains a snakemake pipeline (`pipeline`) to align and quantify intronic and exonic signals from RNA-seq data using salmon. See `pipeline/README.md` for how to use this pipeline in your own work. 
 
