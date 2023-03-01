@@ -73,7 +73,6 @@ These can be used for differential expression testing to identify de novo transc
 Please see our manuscript and associated repository https://github.com/rnabioco/mzt-introns-manuscript for additional details:  
 
 >
-Kent Riemondy, Jesslyn Henrikson and Olivia S. Rissland. Intron dynamics reveal principles of 
-gene regulation during the maternal-to-zygotic transition. https://doi.org/10.1101/2021.12.01.470832 
+Riemondy K, Henriksen JC, Rissland OS. Intron dynamics reveal principles of gene regulation during the maternal-to-zygotic transition. RNA. 2023 Feb 10:rna.079168.122. doi: 10.1261/rna.079168.122
 >
 
