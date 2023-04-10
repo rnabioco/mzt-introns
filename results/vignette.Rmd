@@ -165,9 +165,7 @@ Next DESeq2 will be used to compare the expression of spliced transcripts and in
 mdata$mzt <- ifelse(mdata$stage %in% c("0-1 hr embryo", "1-2 hr embryo"),
                     "maternal",
                     "zygotic")
-ddobj <- DESeqDataSetFromTximport(txi, 
-                                  mdata, 
-                                  ~mzt + strain)
+ddobj <- DESeqDataSetFromTximport(txi, mdata, ~strain + mzt)
 ddobj <- DESeq(ddobj)
 
 res <- results(ddobj, 

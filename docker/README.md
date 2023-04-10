@@ -21,7 +21,7 @@ The docker container also contains Rstudio to enable exploration of the data in 
 
 Get the image
 ```bash
-docker pull rnabioco/mztintrons
+docker pull rnabioco/mzt-introns
 ```
 
 Start a container
